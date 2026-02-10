@@ -7,7 +7,7 @@ export default function Home() {
   return (
     <div>
       <h1>📰 Controversy News</h1>
-      <p>נמצא ב: <code>{pathname}</code></p> {/* ← DEBUG */}
+      <p>נמצא ב: /src/app </p> {/* ← DEBUG */}
       
       {/* שאר הקוד... */}
     </div>
