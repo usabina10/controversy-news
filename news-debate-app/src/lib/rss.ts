@@ -22,7 +22,8 @@ export async function fetchHotNews(): Promise<NewsItem[]> {
       'https://www.ynet.co.il/Integration/StoryRss2.xml',
       'https://feeds.timesofisrael.com/www.timesofisrael.com/feed',
       'https://www.haaretz.co.il/rss/homepage',
-      'https://www.israelhayom.co.il/rss_main'
+      'https://www.israelhayom.co.il/rss_main',
+      'https://rss.app/feeds/n2sDVhinP9NLuni7.xm'
     ];
 
     const results = await Promise.allSettled(
