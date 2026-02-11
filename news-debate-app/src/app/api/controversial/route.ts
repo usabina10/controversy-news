@@ -12,37 +12,34 @@ export async function GET() {
       return NextResponse.json({ events: [] });
     }
 
-    // Debug env
     console.log('🔑 OPENROUTER_KEY exists:', !!process.env.OPENROUTER_KEY);
 
     if (!process.env.OPENROUTER_KEY) {
-      console.log('⚠️ No OpenRouter key - RSS fallback');
+      console.log('⚠️ No OpenRouter - RSS fallback');
       return NextResponse.json({ 
         events: newsItems.slice(0,5).map(item => ({
           id: item.guid,
           title: item.title,
-          right: "פרשנות ימנית (ישראל היום)",
-          left: "פרשנות שמאלנית (הארץ)", 
-          sources: item.link.includes('t.me') ? ["טלגרם"] : ["ynet"],
+          right: "פרשנות ימנית",
+          left: "פרשנות שמאלנית", 
+          sources: ["RSS"],
           controversial: true
         }))
       });
     }
 
-    // OpenRouter call
-    const prompt = `חדשות שנויות:
+    const prompt = `חדשות:
 ${newsItems.slice(0,3).map(n => n.title).join('\n')}
 
-JSON תקין:
-{"events": [{
+JSON בלבד:
+{"events":[{
   "title": "${newsItems[0]?.title || ''}",
-  "right": "🟥 ימין: 1-2 משפטים קצרים",
-  "left": "🟦 שמאל: 1-2 משפטים קצרים",
-  "sources": ["ynet", "טלגרם"]
-}]} 
-3 events בדיוק!`;
+  "right": "🟥 ימין קצר",
+  "left": "🟦 שמאל קצר",
+  "sources": ["ynet"]
+}]}`;
 
-    console.log('🤖 Sending to OpenRouter...');
+    console.log('🤖 OpenRouter...');
 
     const openrouter = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
@@ -57,51 +54,49 @@ JSON תקין:
       })
     });
 
-    console.log(`🌐 OpenRouter status: ${openrouter.status}`);
+    console.log(`🌐 Status: ${openrouter.status}`);
 
     if (!openrouter.ok) {
       const errorText = await openrouter.text();
-      console.error('❌ OpenRouter error:', errorText);
-      throw new Error(`Status ${openrouter.status}: ${errorText.slice(0,200)}`);
+      throw new Error(`HTTP ${openrouter.status}: ${errorText.slice(0,100)}`);
     }
 
     const result = await openrouter.json();
-    console.log('✅ OpenRouter got response');
-
     const content = result.choices?.[0]?.message?.content || '[]';
-    let aiEvents: any[] = [];
     
+    console.log('📄 AI content preview:', content.slice(0,100));
+
+    // Type-safe parse
+    let aiEvents: any[] = [];
     try {
-      aiEvents = JSON.parse(content);
-    } catch (parseError) {
-      console.error('❌ JSON parse failed:', content.slice(0,300));
+      const parsed = JSON.parse(content);
+      aiEvents = Array.isArray(parsed.events) ? parsed.events : 
+                 Array.isArray(parsed) ? parsed : [];
+    } catch {
+      console.error('JSON failed');
     }
 
-    const events = (aiEvents.events || aiEvents || []).length 
-      ? (aiEvents.events || aiEvents)
+    const events = aiEvents.length 
+      ? aiEvents 
       : newsItems.slice(0,5).map(item => ({
           id: item.guid,
           title: item.title,
           right: "פרשנות ימנית",
           left: "פרשנות שמאלנית",
-          sources: ["fallback"],
+          sources: ["RSS"],
           controversial: true
         }));
 
-    console.log(`🎉 Returning ${events.length} events`);
+    console.log(`🎉 ${events.length} events ready`);
     return NextResponse.json({ events });
 
   } catch (error: any) {
-    console.error('💥 Full API error:', error.message);
+    console.error('💥 Error:', error?.message || 'Unknown');
     return NextResponse.json({ 
       events: [{
-        title: "🚧 טוען חדשות + AI...",
-        right: "בודק OpenRouter...",
-        left: "RSS OK, AI loading...",
-        sources: ["debug"],
-        controversial: true
-      }],
-      debug: { error: error.message }
+        title: "🚧 טוען...",
+        debug: process.env.NODE_ENV === 'development' ? error?.message : undefined
+      }]
     });
   }
 }
