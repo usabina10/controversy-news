@@ -1,5 +1,14 @@
 import { fetchHotNews } from '../../../lib/rss';
 import { NextResponse } from 'next/server';
+// בתחילת GET():
+console.log('OPENROUTER_KEY exists:', !!process.env.OPENROUTER_KEY);
+console.log('News count:', newsItems.length);
+
+// לפני fetch OpenRouter:
+if (!process.env.OPENROUTER_KEY) {
+  console.error('🚫 NO OPENROUTER_KEY');
+  // fallback
+}
 
 export async function GET() {
   try {
