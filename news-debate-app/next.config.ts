@@ -1,12 +1,12 @@
-/** @type {import('next').NextConfig} */
-const nextConfig = {
-  experimental: {
-    turbo: {
-      resolveAlias: {
-        '@': './src',
-        '@/': './src/'
-      }
+import type { NextConfig } from 'next';
+
+const nextConfig: NextConfig = {
+  turbopack: {
+    resolveAlias: {
+      '@': './src',
+      '@/': './src/'
     }
   }
 };
-module.exports = nextConfig;
+
+export default nextConfig;
