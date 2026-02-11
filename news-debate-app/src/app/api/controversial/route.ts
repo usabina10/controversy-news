@@ -3,100 +3,63 @@ import { NextResponse } from 'next/server';
 
 export async function GET() {
   try {
-    console.log('🚀 API start');
-    
     const newsItems = await fetchHotNews();
-    console.log(`📊 Got ${newsItems.length} news items`);
     
-    if (!newsItems.length) {
-      return NextResponse.json({ events: [] });
-    }
+    if (!newsItems.length) return NextResponse.json({ events: [] });
 
-    console.log('🔑 OPENROUTER_KEY exists:', !!process.env.OPENROUTER_KEY);
+    const fallback = newsItems.slice(0,5).map(item => ({
+      id: item.guid,
+      title: item.title,
+      right: "🟥 ימין: ניצחון נתניהו",
+      left: "🟦 שמאל: סכנה", 
+      sources: ["ynet", "טלגרם"],
+      controversial: true
+    }));
 
     if (!process.env.OPENROUTER_KEY) {
-      console.log('⚠️ No OpenRouter - RSS fallback');
-      return NextResponse.json({ 
-        events: newsItems.slice(0,5).map(item => ({
-          id: item.guid,
-          title: item.title,
-          right: "פרשנות ימנית",
-          left: "פרשנות שמאלנית", 
-          sources: ["RSS"],
-          controversial: true
-        }))
-      });
+      return NextResponse.json({ events: fallback });
     }
 
-    const prompt = `חדשות:
-${newsItems.slice(0,3).map(n => n.title).join('\n')}
-
-JSON בלבד:
-{"events":[{
-  "title": "${newsItems[0]?.title || ''}",
-  "right": "🟥 ימין קצר",
-  "left": "🟦 שמאל קצר",
-  "sources": ["ynet"]
-}]}`;
-
-    console.log('🤖 OpenRouter...');
-
-    const openrouter = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${process.env.OPENROUTER_KEY}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://controversy-news.vercel.app/',
+        'X-Title': 'News Debate'
       },
       body: JSON.stringify({
-        model: 'meta-llama/llama-3.1-70b-instruct:free',
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.1
+        model: 'meta-llama/llama-3.3-70b-instruct:free',  // ✓ 2026 free
+        messages: [{
+          role: 'user',
+          content: `פרקנויות: ${newsItems.slice(0,2).map(n => n.title).join('; ')}
+תוצאה JSON:
+{"events":[{"title":"כותרת","right":"🟥 ימין","left":"🟦 שמאל","sources":["ynet"]}]}`
+        }]
       })
     });
 
-    console.log(`🌐 Status: ${openrouter.status}`);
-
-    if (!openrouter.ok) {
-      const errorText = await openrouter.text();
-      throw new Error(`HTTP ${openrouter.status}: ${errorText.slice(0,100)}`);
+    if (!response.ok) {
+      const err = await response.text();
+      console.error('OpenRouter:', err);
+      return NextResponse.json({ events: fallback });
     }
 
-    const result = await openrouter.json();
-    const content = result.choices?.[0]?.message?.content || '[]';
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || '{}';
     
-    console.log('📄 AI content preview:', content.slice(0,100));
-
-    // Type-safe parse
-    let aiEvents: any[] = [];
+    let events = fallback;
     try {
       const parsed = JSON.parse(content);
-      aiEvents = Array.isArray(parsed.events) ? parsed.events : 
-                 Array.isArray(parsed) ? parsed : [];
-    } catch {
-      console.error('JSON failed');
-    }
+      if (parsed.events && Array.isArray(parsed.events)) {
+        events = parsed.events;
+      }
+    } catch {}
 
-    const events = aiEvents.length 
-      ? aiEvents 
-      : newsItems.slice(0,5).map(item => ({
-          id: item.guid,
-          title: item.title,
-          right: "פרשנות ימנית",
-          left: "פרשנות שמאלנית",
-          sources: ["RSS"],
-          controversial: true
-        }));
-
-    console.log(`🎉 ${events.length} events ready`);
     return NextResponse.json({ events });
 
-  } catch (error: any) {
-    console.error('💥 Error:', error?.message || 'Unknown');
-    return NextResponse.json({ 
-      events: [{
-        title: "🚧 טוען...",
-        debug: process.env.NODE_ENV === 'development' ? error?.message : undefined
-      }]
-    });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json({ events: [{ title: "🚧 טוען AI..." }] });
   }
 }
