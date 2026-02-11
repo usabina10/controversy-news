@@ -1,31 +1,50 @@
-import { getControversySources } from '@/lib/rss'; // RSS שלך!
-import { OPENROUTER_KEY } from '@/lib/env'; // env.local
+import { fetchHotNews } from '@/lib/rss'; // RSS שלך!
+import { OPENROUTER_KEY } from '@/lib/env';
 import { NextResponse } from 'next/server';
 
 export async function GET() {
-  const sources = await getControversySources();
+  // 1. RSS שלך → NewsItem[]
+  const newsItems = await fetchHotNews();
   
-  // RSS fetch + OpenRouter
-  const rssTexts = await Promise.all(
-    sources.slice(0,3).map(s => fetch(s.url).then(r => r.text()))
-  );
+  if (newsItems.length === 0) {
+    return NextResponse.json({ events: [] });
+  }
+  
+  // 2. OpenRouter controversial analysis
+  const newsText = newsItems.map(n => 
+    `${n.title}\n${n.pubDate}\n${n.description.slice(0,500)}`
+  ).join('\n\n');
   
   const openrouter = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${OPENROUTER_KEY}`,
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://controversy-news.vercel.app'
     },
     body: JSON.stringify({
       model: 'meta-llama/llama-3.1-70b-instruct:free',
       messages: [{
         role: 'user',
-        content: `חדשות ישראליות מ-${sources.map(s=>s.name).join(', ')}: ${rssTexts.join('\n')}
-        TOP 3 controversial JSON: {events: [{title, right, left}]}`
+        content: `חדשות ישראליות חמות:\n${newsText}\n\nנתח ל-3 כרטיסי ויכוח:
+        JSON: {"events": [{"title": "...", "right": "ישראל היום סטייל", "left": "הארץ סטייל", "sources": ["ynet"]}]}` 
       }]
     })
   });
   
   const result = await openrouter.json();
-  return NextResponse.json({ events: result.choices[0]?.message?.content });
+  let events = [];
+  try {
+    events = JSON.parse(result.choices[0]?.message?.content || '[]');
+  } catch {
+    // fallback ל-RSS גולמי
+    events = newsItems.slice(0,3).map(item => ({
+      title: item.title,
+      right: "פרשנות ימנית",
+      left: "פרשנות שמאלנית",
+      sources: ["ynet", "israelhayom"]
+    }));
+  }
+  
+  return NextResponse.json({ events });
 }
