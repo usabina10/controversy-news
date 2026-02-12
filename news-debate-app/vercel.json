@@ -1,18 +1,6 @@
 {
-  "version": 2,
-  "functions": {
-    "src/app/api/**/*.ts": {
-      "runtime": "nodejs18"
-    }
-  },
-  "crons": [
-    {
-      "path": "/api/update-sources",
-      "schedule": "0 8 * * *"
-    },
-    {
-      "path": "/api/update-journalists",
-      "schedule": "0 9 * * *"
-    }
-  ]
+  "crons": [{
+    "path": "/api/cron",
+    "schedule": "0 10 * * *"
+  }]
 }
