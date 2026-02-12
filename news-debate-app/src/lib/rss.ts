@@ -11,38 +11,44 @@ interface NewsItem {
 }
 
 const parser = new Parser({
-  customFields: {
-    item: ['contentSnippet', 'isoDate']
-  }
+  customFields: { item: ['contentSnippet', 'isoDate'] }
 });
+
+// סטטי: תמיד זמין
+const STATIC_FEEDS = [
+  'https://www.ynet.co.il/Integration/StoryRss2.xml',
+  'https://www.israelhayom.co.il/rss_main',
+  'https://rss.app/feeds/n2sDVhinP9NLuni7.xml'  // טלגרם שלך
+];
 
 export async function fetchHotNews(): Promise<NewsItem[]> {
   try {
-    const feeds = [
-      // עיתונים רגילים
-      'https://www.ynet.co.il/Integration/StoryRss2.xml',
-      'https://feeds.timesofisrael.com/www.timesofisrael.com/feed', 
-      'https://www.haaretz.co.il/rss/homepage',
-      'https://www.israelhayom.co.il/rss_main',
-      
-      // טלגרם RSS שלך
-      'https://rss.app/feeds/n2sDVhinP9NLuni7.xml',  // קיים
-      'https://t.me/s/iltoday',                       // ישראל היום
-      'https://t.me/s/FidYamin',                      // פעילי ימין
-      process.env.TG_CHANNEL_RSS || ''                // dynamic
-    ].filter(Boolean);  // מסנן ריק
+    // 1. דינמי: sources.json (AI cron)
+    let dynamicFeeds: string[] = [];
+    try {
+      const res = await fetch(`${process.env.VERCEL_URL}/sources.json`);
+      if (res.ok) {
+        const sources = await res.json();
+        dynamicFeeds = [
+          ...sources.feeds.right,
+          ...sources.feeds.center, 
+          ...sources.feeds.left
+        ].slice(0, 10);  // max 10
+      }
+    } catch {}
 
-    console.log(`Fetching ${feeds.length} RSS/Telegram feeds...`);
+    // 2. כל הfeeds
+    const allFeeds = [...dynamicFeeds, ...STATIC_FEEDS];
+    console.log(`📡 ${allFeeds.length} feeds: ${allFeeds.length - STATIC_FEEDS.length} dynamic`);
 
+    // 3. Parse parallel
     const results = await Promise.allSettled(
-      feeds.map(feed => parser.parseURL(feed))
+      allFeeds.map(feed => parser.parseURL(feed))
     );
 
     const newsItems: NewsItem[] = [];
-    
-    results.forEach((result, index) => {
+    results.forEach((result, i) => {
       if (result.status === 'fulfilled' && result.value.items) {
-        console.log(`Feed ${feeds[index]}: ${(result.value.items as any[]).length} items`);
         (result.value.items as any[]).slice(0, 3).forEach(item => {
           if (item.title && item.link) {
             newsItems.push({
@@ -56,23 +62,17 @@ export async function fetchHotNews(): Promise<NewsItem[]> {
             });
           }
         });
-      } else {
-        console.error(`Feed ${feeds[index]} failed:`, result.status === 'rejected' ? result.reason : 'no items');
       }
     });
 
-    // הסר כפילויות + TOP 5 חדשות
-    const uniqueNews = newsItems
-      .filter((item, index, self) => 
-        index === self.findIndex(n => n.guid === item.guid)
-      )
+    // 4. TOP 5 unique
+    return newsItems
+      .filter((item, idx, self) => idx === self.findIndex(n => n.guid === item.guid))
       .sort((a, b) => new Date(b.isoDate).getTime() - new Date(a.isoDate).getTime())
-      .slice(0, 5);  // 5 פריטים לOpenRouter!
+      .slice(0, 5);
 
-    console.log(`Returning ${uniqueNews.length} unique hot news items`);
-    return uniqueNews;
   } catch (error) {
-    console.error('RSS fetch error:', error);
+    console.error('RSS error:', error);
     return [];
   }
 }
