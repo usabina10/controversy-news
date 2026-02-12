@@ -1,0 +1,20 @@
+{
+  "functions": {
+    "src/app/api/**/*.ts": {
+      "runtime": "nodejs18.x"
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/update-sources",
+      "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/update-journalists", 
+      "schedule": "0 9 * * *"
+    }
+  ],
+  "env": {
+    "NODE_ENV": "production"
+  }
+}
