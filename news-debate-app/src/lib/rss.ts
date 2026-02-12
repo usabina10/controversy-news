@@ -16,9 +16,7 @@ const parser = new Parser({
 
 // סטטי: תמיד זמין
 const STATIC_FEEDS = [
-  'https://www.ynet.co.il/Integration/StoryRss2.xml',
-  'https://www.israelhayom.co.il/rss_main',
-  'https://rss.app/feeds/n2sDVhinP9NLuni7.xml'  // טלגרם שלך
+    'https://rss.app/feeds/n2sDVhinP9NLuni7.xml'  // טלגרם שלך
 ];
 
 export async function fetchHotNews(): Promise<NewsItem[]> {
