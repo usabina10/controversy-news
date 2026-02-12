@@ -1,56 +1,49 @@
-import { fetchHotNews } from '../../../lib/rss';
 import { NextResponse } from 'next/server';
 
-export async function GET() {
+export async function POST() {
   try {
-    const newsItems = await fetchHotNews();
-    
-    if (!newsItems.length) return NextResponse.json({ events: [] });
+    const prompt = `אתר מקורות חדשות פוליטיות ישראליות עם הטיה:
+- ימין: ישראל היום, ערוץ 14 RSS
+- מרכז: ynet, Times of Israel  
+- שמאל: הארץ, כאן 11
 
-    // RSS fallback תמיד (עובד!)
-    const events = newsItems.slice(0,5).map((item, i) => ({
-      id: item.guid || `news-${i}`,
-      title: item.title,
-      right: i % 2 === 0 ? "🟥 ימין: ניצחון מדיני" : "🟥 ימין: חוזק ביטחוני",
-      left: i % 2 === 0 ? "🟦 שמאל: סיכון" : "🟦 שמאל: דרושה חקירה", 
-      sources: item.link.includes('ynet') ? ["ynet"] : ["טלגרם"],
-      controversial: true,
-      link: item.link
-    }));
+החזר JSON:
+{
+  "feeds": {
+    "right": ["https://...", "https://..."],
+    "center": [...],
+    "left": [...]
+  }
+}`;
 
-    // OpenRouter רק אם לא rate-limit
-    if (process.env.OPENROUTER_KEY) {
-      try {
-        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${process.env.OPENROUTER_KEY}`,
-            'Content-Type': 'application/json',
-            'HTTP-Referer': 'https://controversy-news.vercel.app'
-          },
-          body: JSON.stringify({
-            model: 'google/gemma2-9b-it:free',  // קטן + free stable
-            messages: [{ role: 'user', content: newsItems[0].title }]
-          })
-        });
+    const ai = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.OPENROUTER_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'google/gemma2-9b-it:free',
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
 
-        if (response.ok) {
-          const data = await response.json();
-          // AI success → override events
-        }
-      } catch (aiError: any) {
-        if (aiError.message.includes('429') || aiError.message.includes('rate')) {
-          console.log('⏳ Rate limit - using RSS fallback');
-        } else {
-          console.error('AI error:', aiError.message);
-        }
-      }
-    }
+    const result = await ai.json();
+    const sources = JSON.parse(result.choices[0].message.content);
 
-    return NextResponse.json({ events });
+    // שמור לpublic/sources.json
+    await fetch(`${process.env.VERCEL_URL}/api/write-sources`, {
+      method: 'POST',
+      body: JSON.stringify(sources)
+    });
 
+    // Trigger rebuild
+    await fetch(`https://api.vercel.com/v1/deployments/redeploy?projectId=${process.env.VERCEL_PROJECT_ID}&teamId=${process.env.VERCEL_TEAM_ID}`, {
+      headers: { Authorization: `Bearer ${process.env.VERCEL_TOKEN}` }
+    });
+
+    return NextResponse.json({ updated: sources.feeds.length });
   } catch (error) {
-    console.error(error);
-    return NextResponse.json({ events: [{ title: "🚧 טוען חדשות..." }] });
+    return NextResponse.json({ error }, { status: 500 });
   }
 }
