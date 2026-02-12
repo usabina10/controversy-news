@@ -1,7 +1,8 @@
 {
+  "version": 2,
   "functions": {
     "src/app/api/**/*.ts": {
-      "runtime": "nodejs18.x"
+      "runtime": "nodejs18"
     }
   },
   "crons": [
@@ -10,11 +11,8 @@
       "schedule": "0 8 * * *"
     },
     {
-      "path": "/api/update-journalists", 
+      "path": "/api/update-journalists",
       "schedule": "0 9 * * *"
     }
-  ],
-  "env": {
-    "NODE_ENV": "production"
-  }
+  ]
 }
