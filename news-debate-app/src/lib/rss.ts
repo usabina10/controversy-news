@@ -24,7 +24,8 @@ export async function fetchHotNews(): Promise<NewsItem[]> {
     // 1. דינמי: sources.json (AI cron)
     let dynamicFeeds: string[] = [];
     try {
-      const res = await fetch(`${process.env.VERCEL_URL}/sources.json`);
+      const res = await fetch('/sources.json');
+
       if (res.ok) {
         const sources = await res.json();
         dynamicFeeds = [
