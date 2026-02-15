@@ -48,10 +48,35 @@ export async function GET() {
 
     const uniqueEntities = Array.from(entitiesToCheck);
 
-    // 3. בדיקה ב-Redis (מפה מאוחדת לישויות)
-    const existingBiases: Record<string, string> = await redis.hgetall('entity_bias_map') || {};
-    const missingEntities = uniqueEntities.filter(e => !existingBiases[e]);
+    // 3. איחוד מקורות - טיפול מיוחד בטלגרם
+const allArticles = [
+  ...rssItems.map((item: any) => {
+    // בטלגרם, לעיתים קרובות שם הערוץ הוא ה'מקור'
+    const channelName = item.source || item.feedTitle || 'Telegram Channel';
+    return {
+      ...item,
+      sourceName: channelName,
+      author: item.author || channelName, // בטלגרם הערוץ הוא לרוב גם הכותב
+      sourceOrigin: 'Telegram'
+    };
+  }),
+  ...newsApiArticles.map((a: any) => ({
+    id: a.url,
+    title: a.title,
+    link: a.url,
+    pubDate: a.publishedAt,
+    sourceName: a.source?.name || 'NewsAPI',
+    author: a.author || '',
+    sourceOrigin: 'NewsAPI'
+  }))
+];
 
+// עכשיו uniqueEntities יכיל גם את שמות ערוצי הטלגרם
+const entitiesToCheck = new Set<string>();
+allArticles.forEach(a => {
+  if (a.sourceName) entitiesToCheck.add(a.sourceName);
+  if (a.author && a.author.length > 2) entitiesToCheck.add(a.author);
+});
     // 4. השלמה ע"י AI אם חסר מידע
     if (missingEntities.length > 0) {
       try {
