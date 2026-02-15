@@ -4,104 +4,94 @@ import { Redis } from '@upstash/redis';
 
 export const dynamic = 'force-dynamic';
 
-// חיבור ל-Upstash Redis
 const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL!,
   token: process.env.UPSTASH_REDIS_REST_TOKEN!,
 });
 
-const AI_PROMPT = `Analyze the following Israeli news sources and classify their political bias based on current public perception and online discourse in 2025-2026. 
-Categories: 'right', 'center', 'left'. 
-Return ONLY clean JSON: {"source_name": "bias"}.
-Sources: `;
+const AI_CLASSIFICATION_PROMPT = `Analyze the following Israeli news entities (outlets or journalists) and classify their political bias based on current public perception and online discourse (2025-2026).
+Categories: 'right', 'center', 'left'.
+Return ONLY clean JSON: {"entity_name": "bias"}.
+Entities to classify: `;
 
 export async function GET() {
   try {
-    // 1. שליפת חדשות מ-NewsAPI (פוליטיקה ומשפט)
-    let newsApiArticles = [];
-    try {
-      const query = encodeURIComponent('(פוליטיקה OR משפט OR כנסת OR בג"ץ OR נתניהו OR Israel politics)');
-      const newsApiRes = await fetch(
-        `https://newsapi.org/v2/everything?q=${query}&sortBy=publishedAt&pageSize=15&apiKey=${process.env.NEWSAPI_KEY}`,
-        { cache: 'no-store' }
-      );
-      const newsApiData = await newsApiRes.json();
-      newsApiArticles = newsApiData.articles || [];
-    } catch (e) {
-      console.error("NewsAPI Error:", e);
-    }
-
-    // 2. שליפת חדשות מ-RSS/טלגרם
+    // 1. שליפת נתונים
     const rssItems = await fetchHotNews().catch(() => []);
+    const query = encodeURIComponent('(פוליטיקה OR משפט OR כנסת OR Israel politics)');
+    const newsApiRes = await fetch(
+      `https://newsapi.org/v2/everything?q=${query}&sortBy=publishedAt&pageSize=20&apiKey=${process.env.NEWSAPI_KEY}`,
+      { cache: 'no-store' }
+    );
+    const newsApiData = await newsApiRes.json();
+    const newsApiArticles = newsApiData.articles || [];
 
-    // 3. איחוד מקורות לצורך סיווג
+    // 2. איחוד ויצירת רשימת ישויות (עיתונים ועיתונאים) לסיווג
     const allArticles = [
-      ...rssItems.map((item: any) => ({ ...item, sourceName: 'Telegram/RSS' })),
+      ...rssItems.map((item: any) => ({ ...item, sourceName: 'Telegram/RSS', author: item.author || '' })),
       ...newsApiArticles.map((a: any) => ({
         id: a.url,
         title: a.title,
         link: a.url,
-        description: a.description,
         pubDate: a.publishedAt,
-        sourceName: a.source?.name || 'NewsAPI'
+        sourceName: a.source?.name || 'NewsAPI',
+        author: a.author || '' // NewsAPI נותן שדה מחבר
       }))
     ];
 
-    // 4. ניהול Bias דינמי מול Redis ו-AI
-    const uniqueSources = Array.from(new Set(allArticles.map(a => a.sourceName)));
-    
-    // שליפת כל הסיווגים הקיימים ב-Redis במכה אחת
-    const existingBiases: Record<string, string> = await redis.hgetall('bias_map') || {};
-    
-    // זיהוי מקורות חדשים שאין להם סיווג
-    const missingSources = uniqueSources.filter(s => !existingBiases[s]);
+    // איסוף שמות ייחודיים של מקורות ושל עיתונאים (אם קיימים)
+    const entitiesToCheck = new Set<string>();
+    allArticles.forEach(a => {
+      if (a.sourceName) entitiesToCheck.add(a.sourceName);
+      if (a.author && a.author.length > 2 && a.author.length < 30) entitiesToCheck.add(a.author);
+    });
 
-    if (missingSources.length > 0) {
+    const uniqueEntities = Array.from(entitiesToCheck);
+
+    // 3. בדיקה ב-Redis (מפה מאוחדת לישויות)
+    const existingBiases: Record<string, string> = await redis.hgetall('entity_bias_map') || {};
+    const missingEntities = uniqueEntities.filter(e => !existingBiases[e]);
+
+    // 4. השלמה ע"י AI אם חסר מידע
+    if (missingEntities.length > 0) {
       try {
         const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
           method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${process.env.OPENROUTER_KEY}`,
-            'Content-Type': 'application/json'
-          },
+          headers: { 'Authorization': `Bearer ${process.env.OPENROUTER_KEY}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             model: 'google/gemma2-9b-it:free',
-            messages: [{ role: 'user', content: AI_PROMPT + missingSources.join(', ') }]
+            messages: [{ role: 'user', content: AI_CLASSIFICATION_PROMPT + missingEntities.join(', ') }]
           })
         });
 
         if (aiRes.ok) {
           const aiData = await aiRes.json();
-          const content = aiData.choices?.[0]?.message?.content || '{}';
-          const newBiases = JSON.parse(content.replace(/```json|```/g, '').trim());
+          const newBiases = JSON.parse(aiData.choices?.[0]?.message?.content.replace(/```json|```/g, '').trim() || '{}');
           
-          // שמירת הסיווגים החדשים ב-Redis (Hash set)
-          for (const [source, bias] of Object.entries(newBiases)) {
-            await redis.hset('bias_map', { [source]: bias });
-            existingBiases[source] = bias as string;
+          for (const [entity, bias] of Object.entries(newBiases)) {
+            await redis.hset('entity_bias_map', { [entity]: bias });
+            existingBiases[entity] = bias as string;
           }
         }
-      } catch (aiErr) {
-        console.error("AI Classification failed", aiErr);
-      }
+      } catch (e) { console.error("AI Error", e); }
     }
 
-    // 5. הצמדת ה-Bias לכל ידיעה ומיון סופי
-    const finalNews = allArticles.map(article => ({
-      ...article,
-      bias: existingBiases[article.sourceName] || 'center'
-    })).sort((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime());
+    // 5. שקלול Bias: עיתונאי גובר על עיתון
+    const finalNews = allArticles.map(article => {
+      const authorBias = article.author ? existingBiases[article.author] : null;
+      const sourceBias = existingBiases[article.sourceName] || 'center';
+      
+      return {
+        ...article,
+        // אם יש סיווג לעיתונאי - השתמש בו. אם לא - השתמש בסיווג העיתון.
+        bias: authorBias || sourceBias,
+        classifiedBy: authorBias ? 'author' : 'source'
+      };
+    }).sort((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime());
 
-    return NextResponse.json({
-      newsItems: finalNews.slice(0, 20),
-      stats: {
-        total: finalNews.length,
-        sourcesCount: uniqueSources.length
-      }
-    });
+    return NextResponse.json({ newsItems: finalNews.slice(0, 20) });
 
   } catch (error: any) {
-    console.error('Final API Error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
