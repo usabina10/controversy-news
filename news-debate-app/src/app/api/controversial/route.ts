@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 import { NextResponse } from 'next/server';
 import { fetchHotNews } from '@/lib/rss'; // Using @ alias is standard in Next.js
 
@@ -8,18 +9,24 @@ export async function GET() {
     // 1. RSS Hybrid
     const newsItems = await fetchHotNews();
 
-    // 2. NewsAPI
    // 2. NewsAPI (Debug Version)
 let newsApiArticles = [];
+// Inside your GET function
+console.log("--- DEBUG START ---");
+console.log("NEWSAPI_KEY status:", process.env.NEWSAPI_KEY ? "Present" : "MISSING");
+
 try {
-  const url = `https://newsapi.org/v2/top-headlines?country=il&apiKey=${process.env.NEWSAPI_KEY}&pageSize=10`;
-  
-  // LOG 1: Check if the key exists
-  console.log("Fetching NewsAPI with Key:", process.env.NEWSAPI_KEY ? "EXISTS" : "MISSING");
-
-  const newsApiRes = await fetch(url);
-  const newsApiData = await newsApiRes.json();
-
+    const res = await fetch(`https://newsapi.org/v2/top-headlines?country=il&apiKey=${process.env.NEWSAPI_KEY}`);
+    const data = await res.json();
+    
+    if (data.status === "error") {
+        console.error("NewsAPI API Error:", data.message);
+    } else {
+        console.log("NewsAPI found articles:", data.totalResults);
+    }
+} catch (e) {
+    console.error("NewsAPI Network Error:", e);
+}
   // LOG 2: Check the API response status
   if (newsApiData.status === "error") {
     console.error("NewsAPI returned an error:", newsApiData.message);
