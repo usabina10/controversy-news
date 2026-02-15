@@ -67,10 +67,14 @@ try {
       newsItems: allNews.slice(0, 10),  // TOP 10
       feedsCount: Object.values(feeds.feeds).flat().length
     });
-  } catch (error: unknown) {
+  } catch (error: unknown) {  // ← Must be top-level catch
     console.error('API error:', error);
     const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ error: errorMsg, newsItems: [], feedsCount: 0 }, { status: 500 });
+    return NextResponse.json({ 
+      error: errorMsg, 
+      newsItems: [], 
+      feedsCount: 0 
+    }, { status: 500 });
   }
 }
 
