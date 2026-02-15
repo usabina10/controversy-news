@@ -9,18 +9,28 @@ export async function GET() {
     const newsItems = await fetchHotNews();
 
     // 2. NewsAPI
-    let newsApiArticles = [];
-    try {
-      const newsApiRes = await fetch(
-        `https://newsapi.org/v2/top-headlines?country=il&apiKey=${process.env.NEWSAPI_KEY}&pageSize=10`
-      );
-      if (newsApiRes.ok) {
-        const newsApiData = await newsApiRes.json();
-        newsApiArticles = newsApiData.articles || [];
-      }
-    } catch (err) {
-      console.error('NewsAPI fetch failed', err);
-    }
+   // 2. NewsAPI (Debug Version)
+let newsApiArticles = [];
+try {
+  const url = `https://newsapi.org/v2/top-headlines?country=il&apiKey=${process.env.NEWSAPI_KEY}&pageSize=10`;
+  
+  // LOG 1: Check if the key exists
+  console.log("Fetching NewsAPI with Key:", process.env.NEWSAPI_KEY ? "EXISTS" : "MISSING");
+
+  const newsApiRes = await fetch(url);
+  const newsApiData = await newsApiRes.json();
+
+  // LOG 2: Check the API response status
+  if (newsApiData.status === "error") {
+    console.error("NewsAPI returned an error:", newsApiData.message);
+  } else {
+    newsApiArticles = newsApiData.articles || [];
+    console.log(`Successfully found ${newsApiArticles.length} articles from NewsAPI`);
+  }
+} catch (err) {
+  // LOG 3: Catch network or parsing errors
+  console.error('NewsAPI fetch failed completely:', err);
+}
 
     // 3. Merge RSS + NewsAPI
     const allNews = [
