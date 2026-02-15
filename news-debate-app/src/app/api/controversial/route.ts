@@ -48,38 +48,52 @@ export async function GET() {
   }
 }
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
-   const prompt = "Find Israeli political news RSS feeds by bias: Right (Israel Hayom, Channel 14), Center (Ynet, Times of Israel), Left (Haaretz, Kan 11). Return clean JSON: {\"feeds\":{\"right\":[\"https://rss1\",\"https://rss2\"],\"center\":[\"https://rss3\"],\"left\":[\"https://rss4\"]}}";
+    const { prompt = PROMPT } = await request.json(); // Custom or generic AI discovery
 
+    // 1. Fetch current hot news
+    const newsItems = await fetchHotNews();
+
+    // 2. AI call (updated model + headers)
     const ai = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${process.env.OPENROUTER_KEY}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://controversy-news.vercel.app',
+        'X-Title': 'Controversy News'
       },
       body: JSON.stringify({
-        model: 'google/gemma2-9b-it:free',
+        model: 'google/gemma2-9b-it:free', // Your preferred model
         messages: [{ role: 'user', content: prompt }]
       })
     });
 
     const result = await ai.json();
-    const sources = JSON.parse(result.choices[0].message.content);
+    const sources = JSON.parse(result.choices[0]?.message?.content || '{}');
 
-    // שמור לpublic/sources.json
+    // 3. Save to public/sources.json (your write-sources API)
     await fetch(`${process.env.VERCEL_URL}/api/write-sources`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(sources)
     });
 
-    // Trigger rebuild
-    await fetch(`https://api.vercel.com/v1/deployments/redeploy?projectId=${process.env.VERCEL_PROJECT_ID}&teamId=${process.env.VERCEL_TEAM_ID}`, {
+    // 4. Trigger Vercel redeploy (updates static files)
+    await fetch(`https://api.vercel.com/v1/deployments/redeploy?projectId=${process.env.VERCEL_PROJECT_ID}&teamId=${process.env.VERCEL_TEAM_ID || ''}`, {
+      method: 'POST',
       headers: { Authorization: `Bearer ${process.env.VERCEL_TOKEN}` }
     });
 
-    return NextResponse.json({ updated: sources.feeds.length });
+    return NextResponse.json({ 
+      updated: sources.feeds?.length || 0, 
+      feeds: sources.feeds,
+      newsItems 
+    });
   } catch (error) {
-    return NextResponse.json({ error }, { status: 500 });
+    console.error('POST error:', error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
+
