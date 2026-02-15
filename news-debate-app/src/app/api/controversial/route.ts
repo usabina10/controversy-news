@@ -5,48 +5,66 @@ const PROMPT = `List 6-8 major Israeli news outlets covering politics. Classify 
 
 export async function GET() {
   try {
-    // 1. Fetch hot news from your RSS sources
+    // 1. RSS Hybrid (טלגרם + AI sources.json)
     const newsItems = await fetchHotNews();
     
-    if (newsItems.length === 0) {
-      return NextResponse.json({ feeds: { right: [], center: [], left: [] }, newsItems: [] });
-    }
+    // 2. NewsAPI (חדש!)
+    let newsApiArticles = [];
+    try {
+      const newsApiRes = await fetch(
+        `https://newsapi.org/v2/top-headlines?country=il&apiKey=${process.env.NEWSAPI_KEY}&pageSize=10`
+      );
+      const newsApiData = await newsApiRes.json();
+      newsApiArticles = newsApiData.articles || [];
+    } catch {}
 
-    // 2. AI discovers dynamic feeds by bias
-    const aiResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.OPENROUTER_KEY}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://controversy-news.vercel.app', // Required by OpenRouter
-        'X-Title': 'Controversy News App'
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini:free', // Free tier; upgrade for production
-        messages: [{ role: 'user', content: PROMPT }]
-      })
-    });
+    // 3. Merge RSS + NewsAPI
+    const allNews = [
+      ...newsItems.map(item => ({ ...item, source: 'RSS' })),
+      ...newsApiArticles.map(article => ({
+        id: article.url,
+        title: article.title || '',
+        link: article.url,
+        description: article.description || '',
+        pubDate: article.publishedAt,
+        guid: article.url,
+        sources: [article.source.name],
+        source: 'NewsAPI'
+      }))
+    ];
 
+    // 4. AI Dynamic sources (feeds)
     let feeds = { feeds: { right: [], center: [], left: [] } };
-    if (aiResponse.ok) {
-      const result = await aiResponse.json();
-      const content = result.choices?.[0]?.message?.content || '{}';
+    try {
+      const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.OPENROUTER_KEY}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': process.env.VERCEL_URL || 'https://controversy-news.vercel.app'
+        },
+        body: JSON.stringify({
+          model: 'google/gemma2-9b-it:free',
+          messages: [{ role: 'user', content: PROMPT }]
+        })
+      });
+      const aiData = await aiRes.json();
+      const content = aiData.choices?.[0]?.message?.content || '{}';
       feeds = JSON.parse(content);
-    }
+    } catch {}
 
-    return NextResponse.json({ feeds, newsItems });
-  } catch (error) {
+    return NextResponse.json({ 
+      feeds, 
+      newsItems: allNews.slice(0, 10),  // TOP 10
+      feedsCount: Object.values(feeds.feeds).flat().length
+    });
+  } catch (error: unknown) {
     console.error('API error:', error);
-    return NextResponse.json(
-      { 
-        error: 'Failed to fetch dynamic feeds/news', 
-        feeds: { feeds: { right: [], center: [], left: [] } },
-        newsItems: [] 
-      }, 
-      { status: 500 }
-    );
+    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+    return NextResponse.json({ error: errorMsg, newsItems: [], feedsCount: 0 }, { status: 500 });
   }
 }
+
 
 export async function POST(request: Request) {
   try {
