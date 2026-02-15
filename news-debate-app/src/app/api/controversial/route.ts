@@ -1,93 +1,107 @@
 import { NextResponse } from 'next/server';
 import { fetchHotNews } from '@/lib/rss';
+import { Redis } from '@upstash/redis';
 
-export const dynamic = 'force-dynamic'; // Prevents Vercel from caching old results
+export const dynamic = 'force-dynamic';
 
-const PROMPT = `List 6-8 major Israeli news outlets covering politics. Classify each by political bias: right-wing (pro-Netanyahu/conservative), center (balanced/mainstream), left-wing (progressive/critical of right). For each, provide their main RSS feed URL. Return ONLY clean JSON: {"feeds":{"right":[],"center":[],"left":[]}}.`;
+// חיבור ל-Upstash Redis
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL!,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+});
+
+const AI_PROMPT = `Analyze the following Israeli news sources and classify their political bias based on current public perception and online discourse in 2025-2026. 
+Categories: 'right', 'center', 'left'. 
+Return ONLY clean JSON: {"source_name": "bias"}.
+Sources: `;
 
 export async function GET() {
   try {
-    // 1. Fetch RSS/Telegram
-    const newsItems = await fetchHotNews();
-    console.log(`System: Found ${newsItems.length} RSS items`);
-
-   // 2. NewsAPI - מיקוד לפוליטיקה ומשפט
-let newsApiArticles = [];
-try {
-  // בניית שאילתה חזקה: פוליטיקה, משפט, כנסת, נתניהו, בג"ץ וכו'
-  const keywords = `(politics OR legal OR "Supreme Court" OR Knesset OR Netanyahu OR פוליטיקה OR משפט OR כנסת OR בג"ץ OR נתניהו)`;
-  const url = `https://newsapi.org/v2/everything?q=${encodeURIComponent(keywords)}&language=he&sortBy=publishedAt&pageSize=15&apiKey=${process.env.NEWSAPI_KEY}`;
-
-  console.log("System: Fetching Politic/Legal news...");
-  
-  const newsApiRes = await fetch(url, { cache: 'no-store' });
-  const newsApiData = await newsApiRes.json();
-
-  if (newsApiData.status === "ok") {
-    newsApiArticles = newsApiData.articles || [];
-    console.log(`System: Found ${newsApiArticles.length} political/legal articles`);
-  }
-} catch (apiErr) {
-  console.error("System: NewsAPI specialized fetch failed", apiErr);
-}
-
-   // 3. Merge & Sort
-const allNews = [
-  ...newsItems.map((item: any) => ({ 
-    ...item, 
-    sourceOrigin: 'RSS',
-    category: 'General',
-    timestamp: new Date(item.pubDate).getTime() 
-  })),
-  ...newsApiArticles.map((article: any) => ({
-    id: article.url,
-    title: article.title,
-    link: article.url,
-    description: article.description,
-    pubDate: article.publishedAt,
-    timestamp: new Date(article.publishedAt).getTime(),
-    sourceOrigin: article.source?.name || 'NewsAPI',
-    category: 'Politics/Legal' // מסייע לך בעיצוב ב-Frontend
-  }))
-].sort((a, b) => b.timestamp - a.timestamp);
-    // 4. AI Feeds Discovery
-    let feeds = { feeds: { right: [], center: [], left: [] } };
+    // 1. שליפת חדשות מ-NewsAPI (פוליטיקה ומשפט)
+    let newsApiArticles = [];
     try {
-      const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${process.env.OPENROUTER_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: 'google/gemma2-9b-it:free',
-          messages: [{ role: 'user', content: PROMPT }]
-        })
-      });
-
-      if (aiRes.ok) {
-        const aiData = await aiRes.json();
-        const content = aiData.choices?.[0]?.message?.content || '{}';
-        feeds = JSON.parse(content.replace(/```json|```/g, '').trim());
-      }
-    } catch (aiErr) {
-      console.error("System: AI Feed discovery failed");
+      const query = encodeURIComponent('(פוליטיקה OR משפט OR כנסת OR בג"ץ OR נתניהו OR Israel politics)');
+      const newsApiRes = await fetch(
+        `https://newsapi.org/v2/everything?q=${query}&sortBy=publishedAt&pageSize=15&apiKey=${process.env.NEWSAPI_KEY}`,
+        { cache: 'no-store' }
+      );
+      const newsApiData = await newsApiRes.json();
+      newsApiArticles = newsApiData.articles || [];
+    } catch (e) {
+      console.error("NewsAPI Error:", e);
     }
 
+    // 2. שליפת חדשות מ-RSS/טלגרם
+    const rssItems = await fetchHotNews().catch(() => []);
+
+    // 3. איחוד מקורות לצורך סיווג
+    const allArticles = [
+      ...rssItems.map((item: any) => ({ ...item, sourceName: 'Telegram/RSS' })),
+      ...newsApiArticles.map((a: any) => ({
+        id: a.url,
+        title: a.title,
+        link: a.url,
+        description: a.description,
+        pubDate: a.publishedAt,
+        sourceName: a.source?.name || 'NewsAPI'
+      }))
+    ];
+
+    // 4. ניהול Bias דינמי מול Redis ו-AI
+    const uniqueSources = Array.from(new Set(allArticles.map(a => a.sourceName)));
+    
+    // שליפת כל הסיווגים הקיימים ב-Redis במכה אחת
+    const existingBiases: Record<string, string> = await redis.hgetall('bias_map') || {};
+    
+    // זיהוי מקורות חדשים שאין להם סיווג
+    const missingSources = uniqueSources.filter(s => !existingBiases[s]);
+
+    if (missingSources.length > 0) {
+      try {
+        const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${process.env.OPENROUTER_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: 'google/gemma2-9b-it:free',
+            messages: [{ role: 'user', content: AI_PROMPT + missingSources.join(', ') }]
+          })
+        });
+
+        if (aiRes.ok) {
+          const aiData = await aiRes.json();
+          const content = aiData.choices?.[0]?.message?.content || '{}';
+          const newBiases = JSON.parse(content.replace(/```json|```/g, '').trim());
+          
+          // שמירת הסיווגים החדשים ב-Redis (Hash set)
+          for (const [source, bias] of Object.entries(newBiases)) {
+            await redis.hset('bias_map', { [source]: bias });
+            existingBiases[source] = bias as string;
+          }
+        }
+      } catch (aiErr) {
+        console.error("AI Classification failed", aiErr);
+      }
+    }
+
+    // 5. הצמדת ה-Bias לכל ידיעה ומיון סופי
+    const finalNews = allArticles.map(article => ({
+      ...article,
+      bias: existingBiases[article.sourceName] || 'center'
+    })).sort((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime());
+
     return NextResponse.json({
-      feeds,
-      newsItems: allNews.slice(0, 15), // Show top 15 mixed
-      feedsCount: Object.values(feeds.feeds || {}).flat().length
+      newsItems: finalNews.slice(0, 20),
+      stats: {
+        total: finalNews.length,
+        sourcesCount: uniqueSources.length
+      }
     });
 
   } catch (error: any) {
-    console.error('Final Catch API error:', error);
-    return NextResponse.json({ error: error.message, newsItems: [], feedsCount: 0 }, { status: 500 });
+    console.error('Final API Error:', error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
-}
-
-// Keep your POST function below as it was, but ensure it's outside the GET brackets
-export async function POST(request: Request) {
-    // ... (Your POST code)
-    return NextResponse.json({ success: true });
 }
