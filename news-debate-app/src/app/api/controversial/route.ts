@@ -11,45 +11,45 @@ export async function GET() {
     const newsItems = await fetchHotNews();
     console.log(`System: Found ${newsItems.length} RSS items`);
 
-   // 2. NewsAPI (Enhanced Search Version)
+   // 2. NewsAPI - מיקוד לפוליטיקה ומשפט
 let newsApiArticles = [];
 try {
-  // We use /everything and search for 'israel' to ensure we always get results
-  // Note: /everything requires a 'q' parameter
-  const url = `https://newsapi.org/v2/everything?q=israel&language=he&sortBy=publishedAt&pageSize=10&apiKey=${process.env.NEWSAPI_KEY}`;
+  // בניית שאילתה חזקה: פוליטיקה, משפט, כנסת, נתניהו, בג"ץ וכו'
+  const keywords = `(politics OR legal OR "Supreme Court" OR Knesset OR Netanyahu OR פוליטיקה OR משפט OR כנסת OR בג"ץ OR נתניהו)`;
+  const url = `https://newsapi.org/v2/everything?q=${encodeURIComponent(keywords)}&language=he&sortBy=publishedAt&pageSize=15&apiKey=${process.env.NEWSAPI_KEY}`;
+
+  console.log("System: Fetching Politic/Legal news...");
   
   const newsApiRes = await fetch(url, { cache: 'no-store' });
   const newsApiData = await newsApiRes.json();
 
   if (newsApiData.status === "ok") {
     newsApiArticles = newsApiData.articles || [];
-    console.log(`System: NewsAPI (Everything) found ${newsApiArticles.length} articles`);
-  } else {
-    console.error("System: NewsAPI Error ->", newsApiData.message);
+    console.log(`System: Found ${newsApiArticles.length} political/legal articles`);
   }
 } catch (apiErr) {
-  console.error("System: NewsAPI Fetch Failed", apiErr);
+  console.error("System: NewsAPI specialized fetch failed", apiErr);
 }
 
-    // 3. Merge & Sort (Newest First)
-    const allNews = [
-      ...newsItems.map((item: any) => ({ 
-        ...item, 
-        sourceOrigin: 'Telegram/RSS',
-        timestamp: new Date(item.pubDate).getTime() 
-      })),
-      ...newsApiArticles.map((article: any) => ({
-        id: article.url,
-        title: article.title,
-        link: article.url,
-        description: article.description || '',
-        pubDate: article.publishedAt,
-        timestamp: new Date(article.publishedAt).getTime(),
-        sources: [article.source?.name || 'NewsAPI'],
-        sourceOrigin: 'NewsAPI'
-      }))
-    ].sort((a, b) => b.timestamp - a.timestamp);
-
+   // 3. Merge & Sort
+const allNews = [
+  ...newsItems.map((item: any) => ({ 
+    ...item, 
+    sourceOrigin: 'RSS',
+    category: 'General',
+    timestamp: new Date(item.pubDate).getTime() 
+  })),
+  ...newsApiArticles.map((article: any) => ({
+    id: article.url,
+    title: article.title,
+    link: article.url,
+    description: article.description,
+    pubDate: article.publishedAt,
+    timestamp: new Date(article.publishedAt).getTime(),
+    sourceOrigin: article.source?.name || 'NewsAPI',
+    category: 'Politics/Legal' // מסייע לך בעיצוב ב-Frontend
+  }))
+].sort((a, b) => b.timestamp - a.timestamp);
     // 4. AI Feeds Discovery
     let feeds = { feeds: { right: [], center: [], left: [] } };
     try {
