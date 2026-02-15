@@ -18,36 +18,45 @@ export async function GET() {
       newsApiArticles = newsApiData.articles || [];
     } catch {}
 
-    // 3. Merge RSS + NewsAPI
-    const allNews = [
-      ...newsItems.map(item => ({ ...item, source: 'RSS' })),
-      ...(newsApiArticles.map((article: any) => ({
-        id: article.url,
-        title: article.title || '',
-        link: article.url,
-        description: article.description || '',
-        pubDate: article.publishedAt,
-        guid: article.url,
-        sources: [article.source.name],
-        source: 'NewsAPI'
-      }))
-    ];
+    // 3. Merge RSS + NewsAPI (fixed syntax + TS)
+const allNews = [
+  ...newsItems.map(item => ({ ...item, source: 'RSS' })),
+  ...(newsApiArticles.map((article: any) => ({
+    id: article.url,
+    title: article.title || '',
+    link: article.url,
+    description: article.description || '',
+    pubDate: article.publishedAt,
+    guid: article.url,
+    sources: [article.source?.name || 'NewsAPI'],
+    source: 'NewsAPI'
+  })))
+];
 
-    // 4. AI Dynamic sources (feeds)
-    let feeds = { feeds: { right: [], center: [], left: [] } };
-    try {
-      const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${process.env.OPENROUTER_KEY}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': process.env.VERCEL_URL || 'https://controversy-news.vercel.app'
-        },
-        body: JSON.stringify({
-          model: 'google/gemma2-9b-it:free',
-          messages: [{ role: 'user', content: PROMPT }]
-        })
-      });
+// 4. AI Dynamic sources (feeds)
+let feeds = { feeds: { right: [], center: [], left: [] } };
+try {
+  const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${process.env.OPENROUTER_KEY}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': process.env.VERCEL_URL || 'https://controversy-news.vercel.app'
+    },
+    body: JSON.stringify({
+      model: 'google/gemma2-9b-it:free',
+      messages: [{ role: 'user', content: PROMPT }]
+    })
+  });
+
+  if (aiRes.ok) {
+    const aiData = await aiRes.json();
+    feeds = JSON.parse(aiData.choices?.[0]?.message?.content || '{}');
+  }
+} catch (aiError) {
+  console.error('AI feeds error:', aiError);
+}
+
       const aiData = await aiRes.json();
       const content = aiData.choices?.[0]?.message?.content || '{}';
       feeds = JSON.parse(content);
