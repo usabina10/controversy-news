@@ -1,5 +1,8 @@
+import { NextResponse } from 'next/server';
+
 export async function POST() {
-  try {
+  try
+
     const prompt = `אתר מקורות חדשות פוליטיות ישראליות עם הטיה:
 - ימין: ישראל היום, ערוץ 14 RSS
 - מרכז: ynet, Times of Israel  
