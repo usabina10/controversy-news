@@ -91,9 +91,10 @@ export async function POST(request: Request) {
       feeds: sources.feeds,
       newsItems 
     });
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('POST error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    const errorMessage = error instanceof Error ? error.message : 'Failed to update sources';
+    return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }
 
