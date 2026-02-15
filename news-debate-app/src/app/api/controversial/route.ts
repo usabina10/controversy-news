@@ -4,10 +4,12 @@ import { Redis } from '@upstash/redis';
 
 export const dynamic = 'force-dynamic';
 
+// חיבור ל-Redis באמצעות המשתנים שקיימים אצלך ב-Vercel
 const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL!,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+  url: process.env.KV_REST_API_URL!,
+  token: process.env.KV_REST_API_TOKEN!,
 });
+
 
 const AI_PROMPT = `Analyze the political bias of the following Israeli entities (news outlets, journalists, or Telegram channels) based on Israeli public perception 2025-2026. 
 Categories: 'right', 'center', 'left'. 
