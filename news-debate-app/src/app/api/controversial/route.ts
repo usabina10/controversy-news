@@ -2,16 +2,7 @@ import { NextResponse } from 'next/server';
 
 export async function POST() {
   try {
-    const prompt = "אתר מקורות חדשות פוליטיות ישראליות עם הטיה. ימין: ישראל היום RSS, ערוץ 14. מרכז
-
-החזר JSON:
-{
-  "feeds": {
-    "right": ["https://...", "https://..."],
-    "center": [...],
-    "left": [...]
-  }
-}`;
+   const prompt = "Find Israeli political news RSS feeds by bias: Right (Israel Hayom, Channel 14), Center (Ynet, Times of Israel), Left (Haaretz, Kan 11). Return clean JSON: {\"feeds\":{\"right\":[\"https://rss1\",\"https://rss2\"],\"center\":[\"https://rss3\"],\"left\":[\"https://rss4\"]}}";
 
     const ai = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
