@@ -98,3 +98,16 @@ export async function POST(request: Request) {
   }
 }
 
+// NewsAPI fallback/supercharge
+const newsApiRes = await fetch(`https://newsapi.org/v2/top-headlines?country=il&apiKey=${process.env.NEWSAPI_KEY}&pageSize=10`);
+const newsApiData = await newsApiRes.json();
+
+// Merge RSS + NewsAPI
+const allNews = [...newsItems, ...(newsApiData.articles || []).map(article => ({
+  title: article.title,
+  link: article.url,
+  description: article.description,
+  pubDate: article.publishedAt,
+  guid: article.url,
+  sources: [article.source.name]
+}))];
