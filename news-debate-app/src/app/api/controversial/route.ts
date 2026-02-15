@@ -1,5 +1,3 @@
-import { NextResponse } from 'next/server';
-
 export async function POST() {
   try {
     const prompt = `אתר מקורות חדשות פוליטיות ישראליות עם הטיה:
