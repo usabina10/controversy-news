@@ -21,7 +21,7 @@ export async function GET() {
     // 3. Merge RSS + NewsAPI
     const allNews = [
       ...newsItems.map(item => ({ ...item, source: 'RSS' })),
-      ...newsApiArticles.map(article => ({
+      ...(newsApiArticles.map((article: any) => ({
         id: article.url,
         title: article.title || '',
         link: article.url,
