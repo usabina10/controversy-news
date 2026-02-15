@@ -24,18 +24,22 @@ export async function GET() {
 
     // 3. Merge RSS + NewsAPI
     const allNews = [
-      ...newsItems.map((item: any) => ({ ...item, sourceType: 'RSS' })),
-      ...newsApiArticles.map((article: any) => ({
-        id: article.url,
-        title: article.title || '',
-        link: article.url,
-        description: article.description || '',
-        pubDate: article.publishedAt,
-        guid: article.url,
-        sources: [article.source?.name || 'NewsAPI'],
-        sourceType: 'NewsAPI',
-      })),
-    ];
+  ...newsItems.map(item => ({
+    ...item,
+    sourceName: 'Telegram/RSS', // Explicit source name
+    displayDate: item.pubDate,
+  })),
+  ...newsApiArticles.map((article: any) => ({
+    id: article.url,
+    title: article.title || '',
+    link: article.url,
+    description: article.description || '',
+    pubDate: article.publishedAt,
+    displayDate: new Date(article.publishedAt).toLocaleString(),
+    sourceName: article.source?.name || 'NewsAPI', // Use the actual outlet name (e.g., Ynet)
+    guid: article.url,
+  }))
+].sort((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime()); // Sort by newest first
 
     // 4. AI Dynamic sources
     let feeds = { feeds: { right: [], center: [], left: [] } };
