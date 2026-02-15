@@ -11,25 +11,25 @@ export async function GET() {
     const newsItems = await fetchHotNews();
     console.log(`System: Found ${newsItems.length} RSS items`);
 
-    // 2. Fetch NewsAPI + Debug Logs
-    let newsApiArticles = [];
-    try {
-      console.log("System: Fetching NewsAPI with key:", process.env.NEWSAPI_KEY ? "FOUND" : "MISSING");
-      const newsApiRes = await fetch(
-        `https://newsapi.org/v2/top-headlines?country=il&apiKey=${process.env.NEWSAPI_KEY}&pageSize=10`,
-        { cache: 'no-store' }
-      );
-      const newsApiData = await newsApiRes.json();
-      
-      if (newsApiData.status === "ok") {
-        newsApiArticles = newsApiData.articles || [];
-        console.log(`System: NewsAPI returned ${newsApiArticles.length} articles`);
-      } else {
-        console.error("System: NewsAPI Error ->", newsApiData.message);
-      }
-    } catch (apiErr) {
-      console.error("System: NewsAPI Fetch Failed", apiErr);
-    }
+   // 2. NewsAPI (Enhanced Search Version)
+let newsApiArticles = [];
+try {
+  // We use /everything and search for 'israel' to ensure we always get results
+  // Note: /everything requires a 'q' parameter
+  const url = `https://newsapi.org/v2/everything?q=israel&language=he&sortBy=publishedAt&pageSize=10&apiKey=${process.env.NEWSAPI_KEY}`;
+  
+  const newsApiRes = await fetch(url, { cache: 'no-store' });
+  const newsApiData = await newsApiRes.json();
+
+  if (newsApiData.status === "ok") {
+    newsApiArticles = newsApiData.articles || [];
+    console.log(`System: NewsAPI (Everything) found ${newsApiArticles.length} articles`);
+  } else {
+    console.error("System: NewsAPI Error ->", newsApiData.message);
+  }
+} catch (apiErr) {
+  console.error("System: NewsAPI Fetch Failed", apiErr);
+}
 
     // 3. Merge & Sort (Newest First)
     const allNews = [
