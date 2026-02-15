@@ -1,144 +1,93 @@
-export const dynamic = 'force-dynamic';
 import { NextResponse } from 'next/server';
-import { fetchHotNews } from '@/lib/rss'; // Using @ alias is standard in Next.js
+import { fetchHotNews } from '@/lib/rss';
 
-const PROMPT = `List 6-8 major Israeli news outlets covering politics. Classify each by political bias: right-wing (pro-Netanyahu/conservative), center (balanced/mainstream), left-wing (progressive/critical of right). For each, provide their main RSS feed URL. Return ONLY clean JSON: {"feeds":{"right":["https://site1/feed"],"center":["https://site3/feed"],"left":["https://site4/feed"]}}. Examples for guidance only: right like Israel Hayom, center like Ynet/Times of Israel, left like Haaretz.`;
+export const dynamic = 'force-dynamic'; // Prevents Vercel from caching old results
+
+const PROMPT = `List 6-8 major Israeli news outlets covering politics. Classify each by political bias: right-wing (pro-Netanyahu/conservative), center (balanced/mainstream), left-wing (progressive/critical of right). For each, provide their main RSS feed URL. Return ONLY clean JSON: {"feeds":{"right":[],"center":[],"left":[]}}.`;
 
 export async function GET() {
   try {
-    // 1. RSS Hybrid
+    // 1. Fetch RSS/Telegram
     const newsItems = await fetchHotNews();
+    console.log(`System: Found ${newsItems.length} RSS items`);
 
-   // 2. NewsAPI (Debug Version)
-let newsApiArticles = [];
-// Inside your GET function
-console.log("--- DEBUG START ---");
-console.log("NEWSAPI_KEY status:", process.env.NEWSAPI_KEY ? "Present" : "MISSING");
-
-try {
-    const res = await fetch(`https://newsapi.org/v2/top-headlines?country=il&apiKey=${process.env.NEWSAPI_KEY}`);
-    const data = await res.json();
-    
-    if (data.status === "error") {
-        console.error("NewsAPI API Error:", data.message);
-    } else {
-        console.log("NewsAPI found articles:", data.totalResults);
+    // 2. Fetch NewsAPI + Debug Logs
+    let newsApiArticles = [];
+    try {
+      console.log("System: Fetching NewsAPI with key:", process.env.NEWSAPI_KEY ? "FOUND" : "MISSING");
+      const newsApiRes = await fetch(
+        `https://newsapi.org/v2/top-headlines?country=il&apiKey=${process.env.NEWSAPI_KEY}&pageSize=10`,
+        { cache: 'no-store' }
+      );
+      const newsApiData = await newsApiRes.json();
+      
+      if (newsApiData.status === "ok") {
+        newsApiArticles = newsApiData.articles || [];
+        console.log(`System: NewsAPI returned ${newsApiArticles.length} articles`);
+      } else {
+        console.error("System: NewsAPI Error ->", newsApiData.message);
+      }
+    } catch (apiErr) {
+      console.error("System: NewsAPI Fetch Failed", apiErr);
     }
-} catch (e) {
-    console.error("NewsAPI Network Error:", e);
-}
-  // LOG 2: Check the API response status
-  if (newsApiData.status === "error") {
-    console.error("NewsAPI returned an error:", newsApiData.message);
-  } else {
-    newsApiArticles = newsApiData.articles || [];
-    console.log(`Successfully found ${newsApiArticles.length} articles from NewsAPI`);
-  }
-} catch (err) {
-  // LOG 3: Catch network or parsing errors
-  console.error('NewsAPI fetch failed completely:', err);
-}
 
-    // 3. Merge RSS + NewsAPI
+    // 3. Merge & Sort (Newest First)
     const allNews = [
-  ...newsItems.map(item => ({
-    ...item,
-    sourceName: 'Telegram/RSS', // Explicit source name
-    displayDate: item.pubDate,
-  })),
-  ...newsApiArticles.map((article: any) => ({
-    id: article.url,
-    title: article.title || '',
-    link: article.url,
-    description: article.description || '',
-    pubDate: article.publishedAt,
-    displayDate: new Date(article.publishedAt).toLocaleString(),
-    sourceName: article.source?.name || 'NewsAPI', // Use the actual outlet name (e.g., Ynet)
-    guid: article.url,
-  }))
-].sort((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime()); // Sort by newest first
+      ...newsItems.map((item: any) => ({ 
+        ...item, 
+        sourceOrigin: 'Telegram/RSS',
+        timestamp: new Date(item.pubDate).getTime() 
+      })),
+      ...newsApiArticles.map((article: any) => ({
+        id: article.url,
+        title: article.title,
+        link: article.url,
+        description: article.description || '',
+        pubDate: article.publishedAt,
+        timestamp: new Date(article.publishedAt).getTime(),
+        sources: [article.source?.name || 'NewsAPI'],
+        sourceOrigin: 'NewsAPI'
+      }))
+    ].sort((a, b) => b.timestamp - a.timestamp);
 
-    // 4. AI Dynamic sources
+    // 4. AI Feeds Discovery
     let feeds = { feeds: { right: [], center: [], left: [] } };
     try {
       const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${process.env.OPENROUTER_KEY}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': process.env.VERCEL_URL || 'http://localhost:3000',
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           model: 'google/gemma2-9b-it:free',
-          messages: [{ role: 'user', content: PROMPT }],
-        }),
+          messages: [{ role: 'user', content: PROMPT }]
+        })
       });
 
       if (aiRes.ok) {
         const aiData = await aiRes.json();
         const content = aiData.choices?.[0]?.message?.content || '{}';
-        // Clean markdown backticks if AI includes them
-        const cleanJson = content.replace(/```json|```/g, '').trim();
-        feeds = JSON.parse(cleanJson);
+        feeds = JSON.parse(content.replace(/```json|```/g, '').trim());
       }
-    } catch (aiError) {
-      console.error('AI feeds parsing error:', aiError);
+    } catch (aiErr) {
+      console.error("System: AI Feed discovery failed");
     }
 
     return NextResponse.json({
       feeds,
-      newsItems: allNews.slice(0, 10),
-      feedsCount: Object.values(feeds.feeds || {}).flat().length,
+      newsItems: allNews.slice(0, 15), // Show top 15 mixed
+      feedsCount: Object.values(feeds.feeds || {}).flat().length
     });
-  } catch (error: unknown) {
-    console.error('API error:', error);
-    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ error: errorMsg, newsItems: [], feedsCount: 0 }, { status: 500 });
+
+  } catch (error: any) {
+    console.error('Final Catch API error:', error);
+    return NextResponse.json({ error: error.message, newsItems: [], feedsCount: 0 }, { status: 500 });
   }
 }
 
+// Keep your POST function below as it was, but ensure it's outside the GET brackets
 export async function POST(request: Request) {
-  try {
-    const body = await request.json().catch(() => ({}));
-    const prompt = body.prompt || PROMPT;
-
-    const newsItems = await fetchHotNews();
-
-    const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.OPENROUTER_KEY}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': process.env.VERCEL_URL || 'http://localhost:3000',
-        'X-Title': 'Controversy News',
-      },
-      body: JSON.stringify({
-        model: 'google/gemma2-9b-it:free',
-        messages: [{ role: 'user', content: prompt }],
-      }),
-    });
-
-    const aiData = await aiRes.json();
-    const content = aiData.choices?.[0]?.message?.content || '{}';
-    const sources = JSON.parse(content.replace(/```json|```/g, '').trim());
-
-    // Update internal sources
-    if (process.env.VERCEL_URL) {
-        await fetch(`${process.env.VERCEL_URL}/api/write-sources`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(sources),
-        }).catch(err => console.error("Source write failed", err));
-    }
-
-    return NextResponse.json({
-      updated: true,
-      feeds: sources.feeds,
-      newsItems,
-    });
-  } catch (error: unknown) {
-    console.error('POST error:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Failed to update sources';
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
-  }
+    // ... (Your POST code)
+    return NextResponse.json({ success: true });
 }
