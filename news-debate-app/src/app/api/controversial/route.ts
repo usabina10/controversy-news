@@ -9,8 +9,8 @@ const redis = new Redis({
   token: process.env.KV_REST_API_TOKEN!,
 });
 
-const AI_PROMPT = `Return ONLY a JSON object mapping these Israeli news entities to "right", "left", or "center". 
-No talk, no markdown. Example: {"ynet": "center"}. 
+const AI_PROMPT = `Return ONLY a JSON object mapping these Israeli news entities to "right", "left". 
+No talk, no markdown. Example: {"ynet": "left"}. 
 Entities: `;
 
 export async function GET() {
@@ -61,16 +61,18 @@ export async function GET() {
         method: 'POST',
         headers: { 
           'Authorization': `Bearer ${process.env.OPENROUTER_KEY}`, 
-          'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://localhost:3000',
-          'X-Title': 'NarrativeClash'
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model: 'openrouter/auto-yml',
-          messages: [{ role: 'user', content: AI_PROMPT + missing.join(', ') }]
+          // מודל שתמיד זמין בחינם ובדרך כלל לא מחזיר 404
+          model: 'mistralai/mistral-7b-instruct:free', 
+          messages: [{ 
+            role: 'user', 
+            content: `Classify these as {"name": "right/left/center"}: ${missing.join(', ')}` 
+          }]
         })
       });
-
+      
       if (aiRes.ok) {
         const aiData = await aiRes.json();
         const content = aiData.choices?.[0]?.message?.content || '';
