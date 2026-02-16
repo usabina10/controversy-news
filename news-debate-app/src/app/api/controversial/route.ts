@@ -66,7 +66,13 @@ export async function GET() {
     // 4. בדיקת Bias ב-Redis ושלימה מה-AI במידת הצורך
     let biasMap: Record<string, string> = await redis.hgetall('entity_bias_map') || {};
     const missing = Array.from(entities).filter(e => !biasMap[e]);
+    // חפשי את השורה הזו:
+const missing = Array.from(entities).filter(e => !biasMap[e]);
 
+// הוסיפי מיד אחריה את השורה הזו לבדיקה:
+if (missing.length === 0) missing.push("ynet_test", "ערוץ_14_test"); 
+
+console.log("Entities to classify:", missing);
     if (missing.length > 0) {
       console.log(`System: Classifying ${missing.length} new entities via AI...`);
       try {
