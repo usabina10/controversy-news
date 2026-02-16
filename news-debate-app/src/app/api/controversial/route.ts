@@ -9,28 +9,27 @@ const redis = new Redis({
   token: process.env.KV_REST_API_TOKEN!,
 });
 
-const AI_PROMPT = `Classify political bias (right/center/left) for these Israeli news entities. Return ONLY a plain JSON object, no markdown, no backticks. Example: {"ynet": "center"}. Entities: `;
-
 export async function GET() {
+  let aiDebug = "No AI call made";
   try {
-    const [sourcesRes, newsRes, rssItems] = await Promise.all([
-      fetch(`https://newsapi.org/v2/top-headlines/sources?country=il&apiKey=${process.env.NEWSAPI_KEY}`).then(res => res.json()).catch(() => ({ sources: [] })),
-      fetch(`https://newsapi.org/v2/everything?q=${encodeURIComponent('ישראל OR פוליטיקה')}&language=he&sortBy=publishedAt&pageSize=40&apiKey=${process.env.NEWSAPI_KEY}`).then(res => res.json()).catch(() => ({ articles: [] })),
+    const [newsRes, rssItems] = await Promise.all([
+      fetch(`https://newsapi.org/v2/everything?q=${encodeURIComponent('ישראל OR פוליטיקה')}&language=he&sortBy=publishedAt&pageSize=20&apiKey=${process.env.NEWSAPI_KEY}`).then(res => res.json()).catch(() => ({ articles: [] })),
       fetchHotNews().catch(() => [])
     ]);
 
     const allArticles = [
-      ...rssItems.map((item: any) => ({ ...item, sourceName: item.source || 'Telegram', origin: 'Telegram' })),
+      ...rssItems.map((item: any) => ({ ...item, sourceName: item.source || 'Telegram' })),
       ...(newsRes.articles || []).map((a: any) => ({
         id: a.url, title: a.title, link: a.url, pubDate: a.publishedAt,
-        sourceName: a.source?.name || 'NewsAPI', author: a.author || '', origin: 'NewsAPI'
+        sourceName: a.source?.name || 'NewsAPI', author: a.author || ''
       }))
     ];
 
+    // חילוץ שמות וניקוי בסיסי
     const entities = new Set<string>();
     allArticles.forEach(a => {
-      if (a.sourceName && a.sourceName !== 'NewsAPI') entities.add(a.sourceName);
-      if (a.author && a.author.length > 2 && a.author.length < 25) {
+      if (a.sourceName && a.sourceName !== 'NewsAPI') entities.add(a.sourceName.trim());
+      if (a.author && a.author.length > 2 && a.author.length < 20) {
         const clean = a.author.replace(/כתב[ה]?|מערכת/g, '').trim();
         if (clean) entities.add(clean);
       }
@@ -48,42 +47,51 @@ export async function GET() {
         },
         body: JSON.stringify({
           model: 'meta-llama/llama-3.2-3b-instruct:free', 
-          messages: [{ role: 'user', content: AI_PROMPT + missing.join(', ') }]
+          messages: [{ 
+            role: 'user', 
+            content: `Return ONLY a JSON object mapping these Israeli entities to "right", "left", or "center". 
+            Entities: ${missing.join(', ')}` 
+          }]
         })
       });
 
       if (aiRes.ok) {
         const aiData = await aiRes.json();
         const content = aiData.choices?.[0]?.message?.content || '';
-        
-        // ניקוי אגרסיבי של כל מה שאינו JSON
-        const cleanJson = content.replace(/```json|```/g, '').trim();
-        const jsonMatch = cleanJson.match(/\{[\s\S]*\}/);
-        
+        aiDebug = content; // שומרים את התשובה הגולמית לבדיקה
+
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
-          try {
-            const newBiases = JSON.parse(jsonMatch[0]);
-            // כתיבה ישירה אחד-אחד כדי להבטיח הצלחה
-            for (const key in newBiases) {
-              await redis.hset('entity_bias_map', { [key]: String(newBiases[key]).toLowerCase() });
-              biasMap[key] = String(newBiases[key]).toLowerCase();
-            }
-          } catch (e) { console.error("JSON parse error"); }
+          const newBiases = JSON.parse(jsonMatch[0]);
+          
+          // כתיבה ל-Redis עם לוגיקה לטיפול בעברית
+          for (const [key, value] of Object.entries(newBiases)) {
+            const cleanKey = String(key).trim();
+            const cleanValue = String(value).toLowerCase().trim();
+            
+            // כתיבה אסינכרונית ללא המתנה (כדי לא לעכב את התגובה)
+            redis.hset('entity_bias_map', { [cleanKey]: cleanValue });
+            biasMap[cleanKey] = cleanValue;
+          }
         }
+      } else {
+        aiDebug = `AI Error: ${aiRes.status}`;
       }
     }
 
-    const finalNews = allArticles.map(a => ({
-      ...a,
-      bias: biasMap[a.author] || biasMap[a.sourceName] || 'center'
-    })).sort((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime());
-
     return NextResponse.json({ 
-      stats: { total: allArticles.length, missing: missing.length, inRedis: Object.keys(biasMap).length },
-      newsItems: finalNews.slice(0, 40) 
+      debug: {
+        aiRawResponse: aiDebug,
+        entitiesSent: missing,
+        redisSize: Object.keys(biasMap).length
+      },
+      newsItems: allArticles.map(a => ({
+        ...a,
+        bias: biasMap[a.author] || biasMap[a.sourceName] || 'center'
+      })).slice(0, 30)
     });
 
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: error.message, aiDebug });
   }
 }
