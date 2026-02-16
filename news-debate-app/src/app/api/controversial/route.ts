@@ -9,11 +9,10 @@ const redis = new Redis({
   token: process.env.KV_REST_API_TOKEN!,
 });
 
-const AI_PROMPT = `Classify political bias (right/center/left) for these Israeli entities. Return ONLY JSON: {"entity": "bias"}. Entities: `;
+const AI_PROMPT = `Classify political bias (right/center/left) for these Israeli news entities. Return ONLY a plain JSON object, no markdown, no backticks. Example: {"ynet": "center"}. Entities: `;
 
 export async function GET() {
   try {
-    // 1. איסוף חדשות
     const [sourcesRes, newsRes, rssItems] = await Promise.all([
       fetch(`https://newsapi.org/v2/top-headlines/sources?country=il&apiKey=${process.env.NEWSAPI_KEY}`).then(res => res.json()).catch(() => ({ sources: [] })),
       fetch(`https://newsapi.org/v2/everything?q=${encodeURIComponent('ישראל OR פוליטיקה')}&language=he&sortBy=publishedAt&pageSize=40&apiKey=${process.env.NEWSAPI_KEY}`).then(res => res.json()).catch(() => ({ articles: [] })),
@@ -28,7 +27,6 @@ export async function GET() {
       }))
     ];
 
-    // 2. חילוץ שמות
     const entities = new Set<string>();
     allArticles.forEach(a => {
       if (a.sourceName && a.sourceName !== 'NewsAPI') entities.add(a.sourceName);
@@ -38,7 +36,6 @@ export async function GET() {
       }
     });
 
-    // 3. בדיקת Redis ו-AI
     let biasMap: Record<string, string> = await redis.hgetall('entity_bias_map') || {};
     const missing = Array.from(entities).filter(e => !biasMap[e]);
 
@@ -58,31 +55,31 @@ export async function GET() {
       if (aiRes.ok) {
         const aiData = await aiRes.json();
         const content = aiData.choices?.[0]?.message?.content || '';
-        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        
+        // ניקוי אגרסיבי של כל מה שאינו JSON
+        const cleanJson = content.replace(/```json|```/g, '').trim();
+        const jsonMatch = cleanJson.match(/\{[\s\S]*\}/);
         
         if (jsonMatch) {
           try {
             const newBiases = JSON.parse(jsonMatch[0]);
-            const p = redis.pipeline();
-            for (const [entity, bias] of Object.entries(newBiases)) {
-              const b = String(bias).toLowerCase();
-              p.hset('entity_bias_map', { [entity]: b });
-              biasMap[entity] = b;
+            // כתיבה ישירה אחד-אחד כדי להבטיח הצלחה
+            for (const key in newBiases) {
+              await redis.hset('entity_bias_map', { [key]: String(newBiases[key]).toLowerCase() });
+              biasMap[key] = String(newBiases[key]).toLowerCase();
             }
-            await p.exec();
-          } catch (e) { console.error("Parse error"); }
+          } catch (e) { console.error("JSON parse error"); }
         }
       }
     }
 
-    // 4. בניית התוצאה
     const finalNews = allArticles.map(a => ({
       ...a,
       bias: biasMap[a.author] || biasMap[a.sourceName] || 'center'
     })).sort((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime());
 
     return NextResponse.json({ 
-      stats: { total: allArticles.length, missing: missing.length },
+      stats: { total: allArticles.length, missing: missing.length, inRedis: Object.keys(biasMap).length },
       newsItems: finalNews.slice(0, 40) 
     });
 
