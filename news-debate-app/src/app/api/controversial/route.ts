@@ -72,11 +72,17 @@ export async function GET() {
         method: 'POST',
         headers: { 
           'Authorization': `Bearer ${process.env.OPENROUTER_KEY}`, 
-          'Content-Type': 'application/json' 
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://github.com/sabina/news-debate-app', // דרישה של OpenRouter
+          'X-Title': 'Narrative Clash App' // דרישה של OpenRouter
         },
         body: JSON.stringify({
-          model: 'google/gemini-2.0-flash-lite-preview-02-05:free',
-          messages: [{ role: 'user', content: AI_PROMPT + missing.join(', ') }]
+          model: 'google/gemini-2.0-pro-exp-02-05:free', // מודל יציב יותר
+          messages: [{ 
+            role: 'user', 
+            content: AI_PROMPT + missing.join(', ') 
+          }],
+          response_format: { type: "json_object" } // מכריח אותו להחזיר JSON
         })
       });
 
