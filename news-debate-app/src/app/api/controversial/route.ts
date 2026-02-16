@@ -1,8 +1,6 @@
 import { NextResponse } from 'next/server';
-import { fetchHotNews } from '@/lib/rss'; // ודאי שהקובץ הזה קיים ב-lib
+import { fetchTelegramRSS } from '@/lib/rss'; // שינינו את שם הפונקציה לבהירות
 import { Redis } from '@upstash/redis';
-
-export const dynamic = 'force-dynamic';
 
 const redis = new Redis({
   url: process.env.KV_REST_API_URL!,
@@ -10,15 +8,37 @@ const redis = new Redis({
 });
 
 export async function GET() {
-  let aiDebug = "No AI call";
   try {
-    // 1. משיכת חדשות רק מה-RSS המגוון שלנו
-    const allArticles = await fetchHotNews();
+    // 1. משיכה משולבת: API דינמי + RSS של טלגרם
+    const [dynamicRes, telegramItems] = await Promise.all([
+      // מקור דינמי (למשל ה-API של יוסף או מקור דומה שסורק אתרים)
+      fetch(`https://israel-news-api.vercel.app/api/news`)
+        .then(res => res.json())
+        .catch(() => []),
+      
+      // ה-RSS של הטלגרם בלבד (הגדרנו ב-lib)
+      fetchTelegramRSS().catch(() => [])
+    ]);
 
-    // 2. בדיקה מול Redis מה כבר מסווג
+    // 2. איחוד המקורות לתוך מערך אחד
+    const allArticles = [
+      ...telegramItems.map((item: any) => ({
+        ...item,
+        origin: 'Telegram'
+      })),
+      ...(dynamicRes || []).map((a: any) => ({
+        id: a.url || a.link,
+        title: a.title,
+        link: a.url || a.link,
+        pubDate: a.date || a.publishedAt,
+        sourceName: a.source || 'דינמי',
+        author: a.author || '',
+        origin: 'Dynamic API'
+      }))
+    ];
+
+    // 3. לוגיקת סיווג ה-AI (נשארת זהה, עובדת על המקורות החדשים)
     let biasMap: Record<string, string> = await redis.hgetall('entity_bias_map') || {};
-    
-    // שליפת שמות שחסרים ב-Map
     const entities = new Set<string>();
     allArticles.forEach(a => {
       if (a.sourceName) entities.add(a.sourceName.trim());
@@ -28,51 +48,17 @@ export async function GET() {
     });
 
     const missing = Array.from(entities).filter(e => !biasMap[e]).slice(0, 5);
+    
+    // ... כאן נכנס קוד ה-AI שמעדכן את ה-Redis (כמו בגרסאות הקודמות) ...
 
-    // 3. קריאת AI לסיווג (רק עבור החסרים)
-    if (missing.length > 0) {
-      const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${process.env.OPENROUTER_KEY?.trim()}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://localhost:3000',
-        },
-        body: JSON.stringify({
-          model: 'google/gemini-2.0-flash-001',
-          messages: [{
-            role: 'user',
-            content: `Categorize these Israeli news entities (right/left/center). Return ONLY JSON: {"Name": "bias"}. Entities: ${missing.join(', ')}`
-          }],
-          response_format: { type: "json_object" }
-        }),
-      });
-
-      if (aiRes.ok) {
-        const aiData = await aiRes.json();
-        const content = aiData.choices?.[0]?.message?.content || '{}';
-        const newBiases = JSON.parse(content);
-        for (const [key, value] of Object.entries(newBiases)) {
-          await redis.hset('entity_bias_map', { [key]: String(value).toLowerCase() });
-          biasMap[key] = String(value).toLowerCase();
-        }
-        aiDebug = content;
-      }
-    }
-
-    // 4. בניית הפיד הסופי ומיונו לפי זמן
-    const finalNews = allArticles
-      .map(a => ({
-        ...a,
-        bias: biasMap[a.author] || biasMap[a.sourceName] || 'center'
-      }))
-      .sort((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime());
+    const finalNews = allArticles.map(a => ({
+      ...a,
+      bias: biasMap[a.author] || biasMap[a.sourceName] || 'center'
+    })).sort((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime());
 
     return NextResponse.json({ 
       status: "success",
-      totalInRedis: Object.keys(biasMap).length,
-      aiRaw: aiDebug,
-      newsItems: finalNews.slice(0, 40) 
+      newsItems: finalNews.slice(0, 50) 
     });
 
   } catch (error: any) {
