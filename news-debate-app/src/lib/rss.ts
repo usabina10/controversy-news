@@ -5,7 +5,7 @@ export async function fetchTelegramRSS() {
   const feeds = [
     { 
       name: 'פיד ימין (טלגרם)', 
-      url: 'https://rsshub.app/telegram/channel/fidyamin' 
+      url: 'https://rsshub.bubbletea.com.hk/telegram/channel/fidyamin' 
     }
   ];
 
