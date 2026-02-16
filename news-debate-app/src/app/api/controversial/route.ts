@@ -76,26 +76,25 @@ export async function GET() {
       if (aiRes.ok) {
         const aiData = await aiRes.json();
         const content = aiData.choices?.[0]?.message?.content || '{}';
-        console.log("System: AI Response Received:", content);
-
+        
+        // חילוץ ה-JSON בעזרת Regex חזק יותר
         const jsonMatch = content.match(/\{[\s\S]*\}/);
+        
         if (jsonMatch) {
           try {
-            const newBiases = JSON.parse(jsonMatch[0]);
+            const newBiases = JSON.parse(jsonMatch[0].trim());
+            console.log("System: Parsed Biases:", newBiases);
+            
+            // כתיבה ל-Redis - נוסיף לוג לכל כתיבה
             for (const [entity, bias] of Object.entries(newBiases)) {
-              const cleanBias = String(bias).toLowerCase();
-              await redis.hset('entity_bias_map', { [entity]: cleanBias });
-              biasMap[entity] = cleanBias;
+              await redis.hset('entity_bias_map', { [entity]: String(bias).toLowerCase() });
             }
-            console.log("System: Redis updated with AI results.");
+            console.log("System: Success! Redis updated.");
           } catch (e) {
-            console.error("System: JSON Parse Error", e);
+            console.error("System: AI returned invalid JSON format", content);
           }
         }
-      } else {
-        console.error("System: AI Fetch Failed", aiRes.status);
       }
-    }
 
     // 5. בדיקה בכוח - כתיבת מפתח בדיקה ל-Redis
     await redis.set("last_run_test", "Last run: " + new Date().toISOString());
