@@ -19,31 +19,36 @@ export async function GET() {
     // בדיקה בכוח: כתיבת מפתח בדיקה ל-Redis
     await redis.set("connection_test", "Last run: " + new Date().toISOString());
     console.log("System: Forced Redis write check performed.");
-   // 1. שליפת חדשות + שליפת רשימת המקורות הרשמית של NewsAPI לישראל
-    const [rssItems, newsApiData, officialSourcesRes] = await Promise.all([
-      fetchHotNews().catch(() => []),
-      fetch(`https://newsapi.org/v2/everything?q=${encodeURIComponent('ישראל OR פוליטיקה')}&language=he&sortBy=publishedAt&apiKey=${process.env.NEWSAPI_KEY}`, { cache: 'no-store' })
-        .then(res => res.json()).catch(() => ({ articles: [] })),
-      fetch(`https://newsapi.org/v2/top-headlines/sources?country=il&apiKey=${process.env.NEWSAPI_KEY}`)
-        .then(res => res.json()).catch(() => ({ sources: [] }))
+ // 1. שליפת מקורות רשמיים מ-NewsAPI (מה שביקשת) + חדשות
+    const [sourcesRes, newsRes, rssItems] = await Promise.all([
+      fetch(`https://newsapi.org/v2/top-headlines/sources?country=il&apiKey=${process.env.NEWSAPI_KEY}`).then(res => res.json()),
+      fetch(`https://newsapi.org/v2/everything?q=${encodeURIComponent('ישראל OR פוליטיקה')}&language=he&sortBy=publishedAt&pageSize=40&apiKey=${process.env.NEWSAPI_KEY}`).then(res => res.json()),
+      fetchHotNews().catch(() => [])
     ]);
 
-    const newsApiArticles = newsApiData.articles || [];
-    const officialSourceNames = officialSourcesRes.sources?.map((s: any) => s.name) || [];
+    // 2. איסוף כל השמות האפשריים לסיווג
+    const entities = new Set<string>();
 
-    // 2. איסוף כל הכתבות
-    const allArticles = [
-      ...rssItems.map((item: any) => ({ ...item, sourceName: item.source || 'Telegram', origin: 'Telegram' })),
-      ...newsApiArticles.map((a: any) => ({
-        id: a.url,
-        title: a.title,
-        link: a.url,
-        pubDate: a.publishedAt,
-        sourceName: a.source?.name || 'NewsAPI',
-        author: a.author || '',
-        origin: 'NewsAPI'
-      }))
-    ];
+    // הוספת המקורות הרשמיים מה-API שביקשת
+    if (sourcesRes.sources) {
+      sourcesRes.sources.forEach((s: any) => {
+        if (s.name) entities.add(s.name);
+      });
+    }
+
+    // חילוץ עיתונאים ומקורות מתוך הכתבות
+    if (newsRes.articles) {
+      newsRes.articles.forEach((a: any) => {
+        if (a.source?.name) entities.add(a.source.name);
+        if (a.author && a.author.length > 2 && a.author.length < 25) {
+          const cleanName = a.author.replace(/כתב[ה]?|מערכת|/g, '').trim();
+          if (cleanName) entities.add(cleanName);
+        }
+      });
+    }
+
+    console.log(`System: Total unique entities found: ${entities.size}`);
+    console.log("System: Samples:", Array.from(entities).slice(0, 5));
 
     // 3. חילוץ דינמי של ישויות (Entities)
     const entities = new Set<string>(officialSourceNames); // מתחילים עם המקורות הרשמיים של NewsAPI
