@@ -62,19 +62,20 @@ export async function GET() {
         entities.add(a.author);
       }
     });
-
-    // 4. בדיקת Bias ב-Redis ושלימה מה-AI במידת הצורך
+// 4. בדיקה ב-Redis וסיווג AI משלים
     let biasMap: Record<string, string> = await redis.hgetall('entity_bias_map') || {};
-    const missing = Array.from(entities).filter(e => !biasMap[e]);
-    // חפשי את השורה הזו:
-const missing = Array.from(entities).filter(e => !biasMap[e]);
+    
+    // הגדרה עם let כדי שנוכל לשנות את המערך אם הוא ריק
+    let missing = Array.from(entities).filter(e => !biasMap[e]);
 
-// הוסיפי מיד אחריה את השורה הזו לבדיקה:
-if (missing.length === 0) missing.push("ynet_test", "ערוץ_14_test"); 
+    // בדיקת דאמי - אם המערך ריק, נוסיף איברים בכוח כדי לבדוק כתיבה ל-Redis
+    if (missing.length === 0 && Object.keys(biasMap).length === 0) {
+      console.log("System: No missing entities found, adding test entities...");
+      missing.push("ynet_test", "ערוץ_14_test", "הארץ_test");
+    }
 
-console.log("Entities to classify:", missing);
     if (missing.length > 0) {
-      console.log(`System: Classifying ${missing.length} new entities via AI...`);
+      console.log(`System: Classifying ${missing.length} entities:`, missing);
       try {
         const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
           method: 'POST',
@@ -90,27 +91,30 @@ console.log("Entities to classify:", missing);
 
         if (aiRes.ok) {
           const aiData = await aiRes.json();
-          const rawContent = aiData.choices?.[0]?.message?.content || '{}';
+          console.log("System: AI Raw Response received");
           
-          // ניקוי חסין של ה-JSON (חילוץ המבנה מתוך טקסט)
+          const rawContent = aiData.choices?.[0]?.message?.content || '{}';
           const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
+          
           if (jsonMatch) {
             const newBiases = JSON.parse(jsonMatch[0]);
             
-            // עדכון ה-Redis והמפה המקומית
             for (const [entity, bias] of Object.entries(newBiases)) {
               const cleanBias = String(bias).toLowerCase();
+              // כתיבה ל-Redis
               await redis.hset('entity_bias_map', { [entity]: cleanBias });
               biasMap[entity] = cleanBias;
             }
             console.log("System: Redis updated successfully.");
           }
+        } else {
+          console.error("System: AI API returned an error:", await aiRes.text());
         }
       } catch (aiError) {
-        console.error("System: AI Classification failed", aiError);
+        console.error("System: AI Classification process failed:", aiError);
       }
     }
-
+    
     // 5. הצמדת ה-Bias ומיון סופי (עיתונאי גובר על מקור)
     const finalNews = allArticles.map(a => {
       const authorBias = a.author ? biasMap[a.author] : null;
