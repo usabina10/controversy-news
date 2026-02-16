@@ -16,6 +16,9 @@ Entities: `;
 
 export async function GET() {
   try {
+    // בדיקה בכוח: כתיבת מפתח בדיקה ל-Redis
+    await redis.set("connection_test", "Last run: " + new Date().toISOString());
+    console.log("System: Forced Redis write check performed.");
     // 1. שליפת נתונים
     const [rssItems, newsApiData] = await Promise.all([
       fetchHotNews().catch(() => []),
