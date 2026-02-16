@@ -38,21 +38,23 @@ export async function GET() {
     const missing = Array.from(entities).filter(e => !biasMap[e]).slice(0, 5);
 
     if (missing.length > 0) {
-      // שימוש בפורמט המדויק מהדוגמה שלך
       const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${process.env.OPENROUTER_KEY?.trim()}`,
-          'HTTP-Referer': 'https://narrativeclash.co.il', // דמה, אבל חשוב
+          'HTTP-Referer': 'https://narrativeclash.co.il',
           'X-Title': 'NarrativeClash',
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: 'google/gemini-2.0-flash-001', // מודל קיים בוודאות
+          model: 'google/gemini-2.0-flash-001',
           messages: [{
             role: 'user',
-            content: `Return only JSON: {"entity": "right/left/center"}. Entities: ${missing.join(', ')}`
-          }]
+            content: `Categorize these Israeli news entities as "right", "left". 
+            Respond ONLY with a JSON object where keys are the names and values are the bias.
+            Entities to categorize: ${missing.join(', ')}`
+          }],
+          response_format: { type: "json_object" }
         }),
       });
 
