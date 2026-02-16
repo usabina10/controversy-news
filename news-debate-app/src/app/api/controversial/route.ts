@@ -73,16 +73,16 @@ export async function GET() {
         headers: { 
           'Authorization': `Bearer ${process.env.OPENROUTER_KEY}`, 
           'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://github.com/sabina/news-debate-app', // דרישה של OpenRouter
-          'X-Title': 'Narrative Clash App' // דרישה של OpenRouter
+          'HTTP-Referer': 'https://localhost:3000', // מוסיף יציבות
+          'X-Title': 'News App'
         },
         body: JSON.stringify({
-          model: 'google/gemini-2.0-pro-exp-02-05:free', // מודל יציב יותר
+          model: 'google/gemini-2.0-flash-lite-preview-02-05:free', // חזרה למודל הקודם
           messages: [{ 
             role: 'user', 
             content: AI_PROMPT + missing.join(', ') 
-          }],
-          response_format: { type: "json_object" } // מכריח אותו להחזיר JSON
+          }]
+          // הורדנו את ה-response_format שגרם ל-400
         })
       });
 
