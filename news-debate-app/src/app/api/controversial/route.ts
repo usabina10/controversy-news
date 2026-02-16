@@ -57,27 +57,19 @@ export async function GET() {
       .slice(0, 5);
 
     if (missing.length > 0) {
-      const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+     const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: { 
           'Authorization': `Bearer ${process.env.OPENROUTER_KEY?.trim()}`, 
-          'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://narrative-clash.vercel.app', // חובה למודלים של גוגל
-          'X-Title': 'Narrative Clash'
+          'Content-Type': 'application/json'
+          // הורדנו את ה-Referer וה-Title - לפעמים הם אלו שיוצרים את ה-400
         },
         body: JSON.stringify({
-          model: 'google/gemini-2.0-flash-lite-preview-02-05:free', 
-          messages: [
-            { 
-              role: 'system', 
-              content: 'You are a political analyst. Return ONLY a valid JSON object.' 
-            },
-            { 
-              role: 'user', 
-              content: `Classify the political bias (right, left, center) of these Israeli news sources/authors. Return ONLY JSON: {"name": "bias"}. Entities: ${missing.join(', ')}` 
-            }
-          ],
-          temperature: 0.1 // עוזר למודל להיות יציב ולא "לחפור"
+          model: 'meta-llama/llama-3.1-8b-instruct:free', 
+          messages: [{ 
+            role: 'user', 
+            content: `Return only JSON: {"entity": "bias"}. Entities: ${missing.join(', ')}` 
+          }]
         })
       });
       
