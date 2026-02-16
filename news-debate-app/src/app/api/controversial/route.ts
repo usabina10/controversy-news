@@ -74,21 +74,25 @@ export async function GET() {
       missing.push("ynet_test", "ערוץ_14_test", "הארץ_test");
     }
 
-    if (missing.length > 0) {
-      console.log(`System: Classifying ${missing.length} entities:`, missing);
-      try {
-        const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-          method: 'POST',
-          headers: { 
-            'Authorization': `Bearer ${process.env.OPENROUTER_KEY}`, 
-            'Content-Type': 'application/json' 
-          },
-          body: JSON.stringify({
-            model: 'google/gemini-2.0-flash-lite-preview-02-05:free',
-            messages: [{ role: 'user', content: AI_PROMPT + missing.join(', ') }]
-          })
-        });
+    // החליפי את החלק של ה-AI בקוד הזה:
+const models = [
+  'google/gemini-2.0-flash-lite-preview-02-05:free',
+  'deepseek/deepseek-r1:free',
+  'qwen/qwen-2-7b-instruct:free'
+];
 
+let aiRes;
+for (const model of models) {
+  aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${process.env.OPENROUTER_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: model,
+      messages: [{ role: 'user', content: AI_PROMPT + missing.join(', ') }]
+    })
+  });
+  if (aiRes.ok) break; // אם הצלחנו, עוצרים את הלולאה
+}
         if (aiRes.ok) {
           const aiData = await aiRes.json();
           console.log("System: AI Raw Response received");
