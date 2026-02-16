@@ -3,10 +3,10 @@ const parser = new Parser();
 
 export async function fetchTelegramRSS() {
   const feeds = [
-    { 
-      name: 'פיד ימין (טלגרם)', 
-      url: 'https://rsshub.bubbletea.com.hk/telegram/channel/fidyamin' 
-    }
+    { name: 'ערוץ 7', url: 'https://www.inn.co.il/Rss.aspx' },
+    { name: 'ישראל היום', url: 'https://www.israelhayom.co.il/rss.xml' },
+    { name: 'מעריב', url: 'https://www.maariv.co.il/Rss/RssFeeds0.aspx' },
+    { name: 'הארץ', url: 'https://www.haaretz.co.il/cmlink/1.147048' }
   ];
 
   try {
@@ -15,23 +15,22 @@ export async function fetchTelegramRSS() {
         parser.parseURL(feed.url)
           .then(res => res.items.map(item => ({
             id: item.guid || item.link || Math.random().toString(),
-            title: item.title || 'עדכון מפיד ימין',
-            link: item.link || '#',
-            // RSSHub לפעמים מחזיר תאריך בפורמט מעט שונה, נוודא תקינות:
+            title: item.title || '',
+            link: item.link || '',
             pubDate: item.isoDate || item.pubDate || new Date().toISOString(),
             sourceName: feed.name,
-            author: 'ימין' // סיווג ידני ראשוני למקרה שה-AI יפספס
+            author: feed.name // נשלח את שם המקור ל-AI כדי שיסווג
           })))
           .catch(err => {
-            console.error(`RSS Error for ${feed.name}:`, err);
-            return []; // מחזיר מערך ריק כדי לא להכשיל את שאר המקורות
+            console.error(`Failed to fetch ${feed.name}:`, err.message);
+            return [];
           })
       )
     );
     
     return results.flat();
   } catch (err) {
-    console.error("General RSS Fetch Error:", err);
+    console.error("General RSS Error:", err);
     return [];
   }
 }
