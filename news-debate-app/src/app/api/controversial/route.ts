@@ -23,7 +23,7 @@ export async function GET() {
       fetchHotNews().catch(() => []),
       fetch(`https://newsapi.org/v2/everything?q=${encodeURIComponent('(פוליטיקה OR משפט OR כנסת)')}&language=he&sortBy=publishedAt&apiKey=${process.env.NEWSAPI_KEY}`).then(res => res.json()).catch(() => ({ articles: [] }))
     ]);
-
+      console.log("Checking Redis connection...");
     const newsApiArticles = newsApiData.articles || [];
 
     // 2. עיבוד ואיחוד: חילוץ שמות ערוצים ועיתונאים
