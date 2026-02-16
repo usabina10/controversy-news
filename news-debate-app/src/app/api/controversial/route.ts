@@ -4,7 +4,6 @@ import { Redis } from '@upstash/redis';
 
 export const dynamic = 'force-dynamic';
 
-// חיבור ל-Redis באמצעות המשתנים שקיימים ב-Vercel
 const redis = new Redis({
   url: process.env.KV_REST_API_URL!,
   token: process.env.KV_REST_API_TOKEN!,
@@ -17,14 +16,9 @@ Entities: `;
 
 export async function GET() {
   try {
-    console.log("System: Starting news fetch and bias classification...");
-
-    // 1. שליפת נתונים במקביל מ-NewsAPI ומה-RSS
+    // 1. שליפת נתונים
     const [rssItems, newsApiData] = await Promise.all([
-      fetchHotNews().catch((err) => {
-        console.error("RSS Fetch Error:", err);
-        return [];
-      }),
+      fetchHotNews().catch(() => []),
       fetch(`https://newsapi.org/v2/everything?q=${encodeURIComponent('(פוליטיקה OR משפט OR כנסת)')}&language=he&sortBy=publishedAt&apiKey=${process.env.NEWSAPI_KEY}`, { cache: 'no-store' })
         .then(res => res.json())
         .catch(() => ({ articles: [] }))
@@ -32,7 +26,7 @@ export async function GET() {
 
     const newsApiArticles = newsApiData.articles || [];
 
-    // 2. איחוד הנתונים למבנה אחיד
+    // 2. איחוד נתונים
     const allArticles = [
       ...rssItems.map((item: any) => ({
         ...item,
@@ -44,7 +38,6 @@ export async function GET() {
         id: a.url,
         title: a.title,
         link: a.url,
-        description: a.description || '',
         pubDate: a.publishedAt,
         sourceName: a.source?.name || 'NewsAPI',
         author: a.author || '',
@@ -52,92 +45,61 @@ export async function GET() {
       }))
     ];
 
-    // 3. חילוץ ישויות ייחודיות לבדיקת Bias
+    // 3. חילוץ ישויות לסיווג
     const entities = new Set<string>();
     allArticles.forEach(a => {
-      if (a.sourceName && a.sourceName !== 'Telegram' && a.sourceName !== 'NewsAPI') {
-        entities.add(a.sourceName);
-      }
-      if (a.author && a.author.length > 2 && a.author.length < 40) {
-        entities.add(a.author);
-      }
+      if (a.sourceName && a.sourceName !== 'Telegram' && a.sourceName !== 'NewsAPI') entities.add(a.sourceName);
+      if (a.author && a.author.length > 2 && a.author.length < 40) entities.add(a.author);
     });
-// 4. בדיקה ב-Redis וסיווג AI משלים
+
+    // 4. בדיקת Redis ו-AI (בתוך ה-Try)
     let biasMap: Record<string, string> = await redis.hgetall('entity_bias_map') || {};
-    
-    // הגדרה עם let כדי שנוכל לשנות את המערך אם הוא ריק
     let missing = Array.from(entities).filter(e => !biasMap[e]);
 
-    // בדיקת דאמי - אם המערך ריק, נוסיף איברים בכוח כדי לבדוק כתיבה ל-Redis
+    // בדיקת דאמי אם ריק
     if (missing.length === 0 && Object.keys(biasMap).length === 0) {
-      console.log("System: No missing entities found, adding test entities...");
-      missing.push("ynet_test", "ערוץ_14_test", "הארץ_test");
+      missing = ["ynet", "haaretz", "channel14"];
     }
 
-    // החליפי את החלק של ה-AI בקוד הזה:
-const models = [
-  'google/gemini-2.0-flash-lite-preview-02-05:free',
-  'deepseek/deepseek-r1:free',
-  'qwen/qwen-2-7b-instruct:free'
-];
+    if (missing.length > 0) {
+      const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: { 
+          'Authorization': `Bearer ${process.env.OPENROUTER_KEY}`, 
+          'Content-Type': 'application/json' 
+        },
+        body: JSON.stringify({
+          model: 'google/gemini-2.0-flash-lite-preview-02-05:free',
+          messages: [{ role: 'user', content: AI_PROMPT + missing.join(', ') }]
+        })
+      });
 
-let aiRes;
-for (const model of models) {
-  aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${process.env.OPENROUTER_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: model,
-      messages: [{ role: 'user', content: AI_PROMPT + missing.join(', ') }]
-    })
-  });
-  if (aiRes.ok) break; // אם הצלחנו, עוצרים את הלולאה
-}
-        if (aiRes.ok) {
-          const aiData = await aiRes.json();
-          console.log("System: AI Raw Response received");
-          
-          const rawContent = aiData.choices?.[0]?.message?.content || '{}';
-          const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
-          
-          if (jsonMatch) {
-            const newBiases = JSON.parse(jsonMatch[0]);
-            
-            for (const [entity, bias] of Object.entries(newBiases)) {
-              const cleanBias = String(bias).toLowerCase();
-              // כתיבה ל-Redis
-              await redis.hset('entity_bias_map', { [entity]: cleanBias });
-              biasMap[entity] = cleanBias;
-            }
-            console.log("System: Redis updated successfully.");
+      if (aiRes.ok) {
+        const aiData = await aiRes.json();
+        const content = aiData.choices?.[0]?.message?.content || '{}';
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        
+        if (jsonMatch) {
+          const newBiases = JSON.parse(jsonMatch[0]);
+          for (const [entity, bias] of Object.entries(newBiases)) {
+            const cleanBias = String(bias).toLowerCase();
+            await redis.hset('entity_bias_map', { [entity]: cleanBias });
+            biasMap[entity] = cleanBias;
           }
-        } else {
-          console.error("System: AI API returned an error:", await aiRes.text());
         }
-      } catch (aiError) {
-        console.error("System: AI Classification process failed:", aiError);
       }
     }
-    
-    // 5. הצמדת ה-Bias ומיון סופי (עיתונאי גובר על מקור)
-    const finalNews = allArticles.map(a => {
-      const authorBias = a.author ? biasMap[a.author] : null;
-      const sourceBias = biasMap[a.sourceName] || 'center';
-      
-      return {
-        ...a,
-        bias: authorBias || sourceBias,
-        biasSource: authorBias ? 'author' : 'outlet'
-      };
-    }).sort((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime());
 
-    // 6. החזרת התוצאה
+    // 5. בניית התוצאה הסופית
+    const finalNews = allArticles.map(a => ({
+      ...a,
+      bias: biasMap[a.author] || biasMap[a.sourceName] || 'center'
+    })).sort((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime());
+
+    // החזרת ה-Response (כעת במיקום הנכון בתוך הפונקציה)
     return NextResponse.json({ 
       newsItems: finalNews.slice(0, 25),
-      metadata: {
-        timestamp: new Date().toISOString(),
-        count: finalNews.length
-      }
+      metadata: { count: finalNews.length }
     });
 
   } catch (error: any) {
