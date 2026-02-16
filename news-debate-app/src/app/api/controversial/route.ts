@@ -9,36 +9,22 @@ const redis = new Redis({
   token: process.env.KV_REST_API_TOKEN!,
 });
 
-const AI_PROMPT = `Return ONLY a JSON object mapping these Israeli news entities to "right", "left". 
-No talk, no markdown. Example: {"ynet": "left"}. 
-Entities: `;
-
 export async function GET() {
-  let aiDebug = "No AI call made";
+  let aiDebug = "No AI call";
   try {
-    // 1. איסוף נתונים מ-NewsAPI ו-RSS
     const [newsRes, rssItems] = await Promise.all([
-      fetch(`https://newsapi.org/v2/everything?q=${encodeURIComponent('ישראל OR פוליטיקה')}&language=he&sortBy=publishedAt&pageSize=40&apiKey=${process.env.NEWSAPI_KEY}`)
-        .then(res => res.json())
-        .catch(() => ({ articles: [] })),
+      fetch(`https://newsapi.org/v2/everything?q=${encodeURIComponent('ישראל OR פוליטיקה')}&language=he&sortBy=publishedAt&pageSize=40&apiKey=${process.env.NEWSAPI_KEY}`).then(res => res.json()).catch(() => ({ articles: [] })),
       fetchHotNews().catch(() => [])
     ]);
 
-    // 2. איחוד כתבות
     const allArticles = [
-      ...rssItems.map((item: any) => ({ ...item, sourceName: item.source || 'Telegram', origin: 'Telegram' })),
+      ...rssItems.map((item: any) => ({ ...item, sourceName: item.source || 'Telegram' })),
       ...(newsRes.articles || []).map((a: any) => ({
-        id: a.url,
-        title: a.title,
-        link: a.url,
-        pubDate: a.publishedAt,
-        sourceName: a.source?.name || 'NewsAPI',
-        author: a.author || '',
-        origin: 'NewsAPI'
+        id: a.url, title: a.title, link: a.url, pubDate: a.publishedAt,
+        sourceName: a.source?.name || 'NewsAPI', author: a.author || ''
       }))
     ];
 
-    // 3. חילוץ שמות וניקוי
     const entities = new Set<string>();
     allArticles.forEach(a => {
       if (a.sourceName && a.sourceName !== 'NewsAPI') entities.add(a.sourceName.trim());
@@ -48,34 +34,28 @@ export async function GET() {
       }
     });
 
-    // 4. בדיקה מול Redis (רק מה שחסר)
     let biasMap: Record<string, string> = await redis.hgetall('entity_bias_map') || {};
-    
-    // שליחת מקסימום 5 שמות בכל פעם כדי למנוע שגיאת 429 (Too Many Requests)
-    const missing = Array.from(entities)
-      .filter(e => !biasMap[e] && e !== 'בדיקת_חיבור')
-      .slice(0, 5);
+    const missing = Array.from(entities).filter(e => !biasMap[e]).slice(0, 5);
 
     if (missing.length > 0) {
-     const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      // שימוש בפורמט המדויק מהדוגמה שלך
+      const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
-        headers: { 
-          'Authorization': `Bearer ${process.env.OPENROUTER_KEY?.trim()}`, 
+        headers: {
+          'Authorization': `Bearer ${process.env.OPENROUTER_KEY?.trim()}`,
+          'HTTP-Referer': 'https://narrativeclash.co.il', // דמה, אבל חשוב
+          'X-Title': 'NarrativeClash',
           'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://localhost:3000', // חלק מהמודלים דורשים את זה
-          'X-Title': 'NewsApp'
         },
         body: JSON.stringify({
-          // זה הנתיב הכי יציב ב-OpenRouter כרגע
-          model: 'google/gemini-pro-1.5', 
-          messages: [{ 
-            role: 'user', 
-            content: `Return JSON only: {"name": "right/left/center"}. Classify: ${missing.join(', ')}` 
-          }],
-          response_format: { type: "json_object" }
-        })
+          model: 'google/gemini-2.0-flash-001', // מודל קיים בוודאות
+          messages: [{
+            role: 'user',
+            content: `Return only JSON: {"entity": "right/left/center"}. Entities: ${missing.join(', ')}`
+          }]
+        }),
       });
-      
+
       if (aiRes.ok) {
         const aiData = await aiRes.json();
         const content = aiData.choices?.[0]?.message?.content || '';
@@ -83,40 +63,28 @@ export async function GET() {
 
         const jsonMatch = content.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
-          try {
-            const newBiases = JSON.parse(jsonMatch[0]);
-            for (const [key, value] of Object.entries(newBiases)) {
-              const cleanKey = String(key).trim();
-              const cleanValue = String(value).toLowerCase().trim();
-              // כתיבה ל-Redis
-              await redis.hset('entity_bias_map', { [cleanKey]: cleanValue });
-              biasMap[cleanKey] = cleanValue;
-            }
-          } catch (e) {
-            console.error("JSON parse error", e);
+          const newBiases = JSON.parse(jsonMatch[0]);
+          for (const [key, value] of Object.entries(newBiases)) {
+            await redis.hset('entity_bias_map', { [key]: String(value).toLowerCase() });
+            biasMap[key] = String(value).toLowerCase();
           }
         }
       } else {
-        aiDebug = `AI Error: ${aiRes.status}`;
+        aiDebug = `Error ${aiRes.status}: ${await aiRes.text()}`;
       }
     }
 
-    // 5. הצמדת הטיות לכתבות
-    const finalNews = allArticles.map(a => ({
-      ...a,
-      bias: biasMap[a.author] || biasMap[a.sourceName] || 'center'
-    })).sort((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime());
-
     return NextResponse.json({ 
-      debug: {
-        aiResponse: aiDebug,
-        missingClassified: missing,
-        totalInRedis: Object.keys(biasMap).length
-      },
-      newsItems: finalNews.slice(0, 35)
+      status: "success",
+      totalInRedis: Object.keys(biasMap).length,
+      aiRaw: aiDebug,
+      newsItems: allArticles.map(a => ({
+        ...a,
+        bias: biasMap[a.author] || biasMap[a.sourceName] || 'center'
+      })).slice(0, 20)
     });
 
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: error.message });
   }
 }
