@@ -19,24 +19,21 @@ export async function GET() {
     // בדיקה בכוח: כתיבת מפתח בדיקה ל-Redis
     await redis.set("connection_test", "Last run: " + new Date().toISOString());
     console.log("System: Forced Redis write check performed.");
-    // 1. שליפת נתונים
-    const [rssItems, newsApiData] = await Promise.all([
+   // 1. שליפת חדשות + שליפת רשימת המקורות הרשמית של NewsAPI לישראל
+    const [rssItems, newsApiData, officialSourcesRes] = await Promise.all([
       fetchHotNews().catch(() => []),
-      fetch(`https://newsapi.org/v2/everything?q=${encodeURIComponent('(פוליטיקה OR משפט OR כנסת)')}&language=he&sortBy=publishedAt&apiKey=${process.env.NEWSAPI_KEY}`, { cache: 'no-store' })
-        .then(res => res.json())
-        .catch(() => ({ articles: [] }))
+      fetch(`https://newsapi.org/v2/everything?q=${encodeURIComponent('ישראל OR פוליטיקה')}&language=he&sortBy=publishedAt&apiKey=${process.env.NEWSAPI_KEY}`, { cache: 'no-store' })
+        .then(res => res.json()).catch(() => ({ articles: [] })),
+      fetch(`https://newsapi.org/v2/top-headlines/sources?country=il&apiKey=${process.env.NEWSAPI_KEY}`)
+        .then(res => res.json()).catch(() => ({ sources: [] }))
     ]);
 
     const newsApiArticles = newsApiData.articles || [];
+    const officialSourceNames = officialSourcesRes.sources?.map((s: any) => s.name) || [];
 
-    // 2. איחוד נתונים
+    // 2. איסוף כל הכתבות
     const allArticles = [
-      ...rssItems.map((item: any) => ({
-        ...item,
-        sourceName: item.source || 'Telegram',
-        author: item.author || '',
-        origin: 'Telegram'
-      })),
+      ...rssItems.map((item: any) => ({ ...item, sourceName: item.source || 'Telegram', origin: 'Telegram' })),
       ...newsApiArticles.map((a: any) => ({
         id: a.url,
         title: a.title,
@@ -48,12 +45,23 @@ export async function GET() {
       }))
     ];
 
-    // 3. חילוץ ישויות לסיווג
-    const entities = new Set<string>();
+    // 3. חילוץ דינמי של ישויות (Entities)
+    const entities = new Set<string>(officialSourceNames); // מתחילים עם המקורות הרשמיים של NewsAPI
+    
     allArticles.forEach(a => {
-      if (a.sourceName && a.sourceName !== 'Telegram' && a.sourceName !== 'NewsAPI') entities.add(a.sourceName);
-      if (a.author && a.author.length > 2 && a.author.length < 40) entities.add(a.author);
+      // מוסיפים את שם האתר/ערוץ
+      if (a.sourceName && a.sourceName !== 'Telegram' && a.sourceName !== 'NewsAPI') {
+        entities.add(a.sourceName);
+      }
+      // מוסיפים את שם העיתונאי (אם קיים ותקין)
+      if (a.author && a.author.length > 2 && a.author.length < 30) {
+        const cleanAuthor = a.author.replace(/כתב[ה]?|מערכת|/g, '').trim();
+        if (cleanAuthor) entities.add(cleanAuthor);
+      }
     });
+
+    // --- כאן נכנסת הבדיקה בכוח ל-Redis שדיברנו עליה ---
+    await redis.set("connection_test", "Last run: " + new Date().toISOString());
 
     // 4. בדיקת Redis ו-AI (בתוך ה-Try)
     let biasMap: Record<string, string> = await redis.hgetall('entity_bias_map') || {};
