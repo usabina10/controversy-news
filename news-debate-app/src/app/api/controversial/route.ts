@@ -12,21 +12,18 @@ const redis = new Redis({
 export async function GET() {
   try {
     // 1. משיכת חדשות ממקורות מגוונים במקביל
-    // שינוי ה-fetch בתוך ה-API
-const [newsRes, rssItems] = await Promise.all([
-  // חיפוש רחב (Everything) במקום כותרות (Top Headlines)
-  fetch(`https://newsapi.org/v2/everything?q=${encodeURIComponent('ישראל OR פוליטיקה OR ימין OR שמאל')}&language=he&sortBy=publishedAt&pageSize=40&apiKey=${process.env.NEWSAPI_KEY}`)
-    .then(res => res.json()),
-  
-  // משיכה מה-RSS המגוון שלנו
-  fetchHotNews() 
-]);
+    const [newsRes, telegramItems] = await Promise.all([
+      fetch(`https://newsapi.org/v2/everything?q=${encodeURIComponent('ישראל OR פוליטיקה OR נתניהו')}&language=he&sortBy=publishedAt&pageSize=40&apiKey=${process.env.NEWSAPI_KEY}`)
+        .then(res => res.json())
+        .catch(() => ({ articles: [] })),
+      fetchHotNews().catch(() => []) 
+    ]);
 
     // 2. איחוד וסינון כפילויות
     const allArticles = [
-      ...telegramItems.map((item: any) => ({
+      ...(telegramItems || []).map((item: any) => ({
         ...item,
-        sourceName: item.source || 'Telegram Source',
+        sourceName: item.sourceName || 'Telegram Source', // תיקון קטן לשם השדה
         origin: 'RSS/Telegram'
       })),
       ...(newsRes.articles || []).map((a: any) => ({
@@ -39,7 +36,6 @@ const [newsRes, rssItems] = await Promise.all([
         origin: 'NewsAPI'
       }))
     ];
-
     // 3. לוגיקת ה-AI (נשארת אותו דבר, היא עובדת מצוין)
     let biasMap: Record<string, string> = await redis.hgetall('entity_bias_map') || {};
     const entities = new Set<string>();
