@@ -64,8 +64,10 @@ export async function GET() {
     let biasMap: Record<string, string> = await redis.hgetall('entity_bias_map') || {};
     const missing = Array.from(entities).filter(e => !biasMap[e] && e.length > 1);
 
-    // 5. הפעלת AI אם חסרים מקורות
+    // 5. הפעלת AI עם לוגים מחמירים
     if (missing.length > 0) {
+      console.log(`System: Calling AI for ${missing.length} entities...`);
+      
       const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: { 
@@ -81,6 +83,9 @@ export async function GET() {
       if (aiRes.ok) {
         const aiData = await aiRes.json();
         const content = aiData.choices?.[0]?.message?.content || '';
+        console.log("RAW AI CONTENT:", content); // זה הלוג הכי חשוב עכשיו!
+
+        // ניסיון חילוץ אגרסיבי
         const jsonMatch = content.match(/\{[\s\S]*\}/);
         
         if (jsonMatch) {
@@ -88,15 +93,24 @@ export async function GET() {
             const newBiases = JSON.parse(jsonMatch[0]);
             const p = redis.pipeline();
             for (const [entity, bias] of Object.entries(newBiases)) {
-              const b = String(bias).toLowerCase();
-              p.hset('entity_bias_map', { [entity]: b });
-              biasMap[entity] = b;
+              p.hset('entity_bias_map', { [entity]: String(bias).toLowerCase() });
+              biasMap[entity] = String(bias).toLowerCase();
             }
             await p.exec();
-          } catch (e) { console.error("Parse error"); }
+            console.log("System: Redis pipeline executed successfully");
+          } catch (e) {
+            console.error("System: JSON Parse failed. Content was:", content);
+          }
         }
+      } else {
+        console.error("System: AI API returned error:", aiRes.status);
       }
     }
+
+    // בדיקת "אל-כשל": כתיבה ישירה ל-Redis בלי קשר ל-AI
+    // אם השורה הזו לא עובדת, הבעיה היא ב-Token של Upstash
+    await redis.hset('entity_bias_map', { "בדיקת_חיבור": "success" });
+    await redis.set("last_api_run", new Date().toISOString());
 
     // 6. הצמדת ה-Bias לכתבות
     const finalNews = allArticles.map(a => ({
