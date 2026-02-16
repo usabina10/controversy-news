@@ -66,7 +66,7 @@ export async function GET() {
           'X-Title': 'NarrativeClash'
         },
         body: JSON.stringify({
-          model: 'meta-llama/llama-3.2-1b-instruct:free', 
+          model: 'openrouter/auto-yml',
           messages: [{ role: 'user', content: AI_PROMPT + missing.join(', ') }]
         })
       });
