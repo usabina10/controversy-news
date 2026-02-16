@@ -10,41 +10,15 @@ const redis = new Redis({
 });
 
 export async function GET() {
+  let aiDebug = "No AI call";
   try {
-  // 1. משיכת נתונים מ-Israel-API (מקורות כמו N12, ערוץ 14 וכו')
-    const [newsRes, israelApiRes, rssItems] = await Promise.all([
-      fetch(`https://newsapi.org/v2/everything?q=${encodeURIComponent('ישראל')}&language=he&apiKey=${process.env.NEWSAPI_KEY}`)
-        .then(res => res.json()).catch(() => ({ articles: [] })),
-      
-      // שימוש ב-Israel-API (דוגמה לנתיב פופולרי מהפרויקט שלו)
-      fetch(`https://israel-news-api.vercel.app/api/news`) 
-        .then(res => res.json()).catch(() => []),
-        
-      fetchHotNews().catch(() => []) 
-    ]);
+    // 1. משיכת חדשות רק מה-RSS המגוון שלנו
+    const allArticles = await fetchHotNews();
 
-    // 2. איחוד המקורות - שימי לב למיפוי השדות מ-Israel-API
-    const allArticles = [
-      ...rssItems,
-      ...(israelApiRes || []).map((a: any) => ({
-        id: a.url || a.link,
-        title: a.title,
-        link: a.url || a.link,
-        pubDate: a.date || a.publishedAt,
-        sourceName: a.source || 'Israel-API',
-        author: a.author || ''
-      })),
-      ...(newsRes.articles || []).map((a: any) => ({
-        id: a.url,
-        title: a.title,
-        link: a.url,
-        pubDate: a.publishedAt,
-        sourceName: a.source?.name || 'NewsAPI',
-        author: a.author || ''
-      }))
-    ];
-    // 3. לוגיקת ה-AI (נשארת אותו דבר, היא עובדת מצוין)
+    // 2. בדיקה מול Redis מה כבר מסווג
     let biasMap: Record<string, string> = await redis.hgetall('entity_bias_map') || {};
+    
+    // שליפת שמות שחסרים ב-Map
     const entities = new Set<string>();
     allArticles.forEach(a => {
       if (a.sourceName) entities.add(a.sourceName.trim());
@@ -54,12 +28,39 @@ export async function GET() {
     });
 
     const missing = Array.from(entities).filter(e => !biasMap[e]).slice(0, 5);
-    
+
+    // 3. קריאת AI לסיווג (רק עבור החסרים)
     if (missing.length > 0) {
-      // כאן רץ הקוד של ה-AI שכתבנו קודם... (דילגתי לקיצור, תשאירי את מה שיש לך)
+      const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.OPENROUTER_KEY?.trim()}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://localhost:3000',
+        },
+        body: JSON.stringify({
+          model: 'google/gemini-2.0-flash-001',
+          messages: [{
+            role: 'user',
+            content: `Categorize these Israeli news entities (right/left/center). Return ONLY JSON: {"Name": "bias"}. Entities: ${missing.join(', ')}`
+          }],
+          response_format: { type: "json_object" }
+        }),
+      });
+
+      if (aiRes.ok) {
+        const aiData = await aiRes.json();
+        const content = aiData.choices?.[0]?.message?.content || '{}';
+        const newBiases = JSON.parse(content);
+        for (const [key, value] of Object.entries(newBiases)) {
+          await redis.hset('entity_bias_map', { [key]: String(value).toLowerCase() });
+          biasMap[key] = String(value).toLowerCase();
+        }
+        aiDebug = content;
+      }
     }
 
-    // 4. בניית הפיד הסופי - מיון לפי תאריך
+    // 4. בניית הפיד הסופי ומיונו לפי זמן
     const finalNews = allArticles
       .map(a => ({
         ...a,
@@ -70,7 +71,8 @@ export async function GET() {
     return NextResponse.json({ 
       status: "success",
       totalInRedis: Object.keys(biasMap).length,
-      newsItems: finalNews.slice(0, 50) 
+      aiRaw: aiDebug,
+      newsItems: finalNews.slice(0, 40) 
     });
 
   } catch (error: any) {
