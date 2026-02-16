@@ -11,20 +11,28 @@ const redis = new Redis({
 
 export async function GET() {
   try {
-    // 1. משיכת חדשות ממקורות מגוונים במקביל
-    const [newsRes, telegramItems] = await Promise.all([
-      fetch(`https://newsapi.org/v2/everything?q=${encodeURIComponent('ישראל OR פוליטיקה OR נתניהו')}&language=he&sortBy=publishedAt&pageSize=40&apiKey=${process.env.NEWSAPI_KEY}`)
-        .then(res => res.json())
-        .catch(() => ({ articles: [] })),
+  // 1. משיכת נתונים מ-Israel-API (מקורות כמו N12, ערוץ 14 וכו')
+    const [newsRes, israelApiRes, rssItems] = await Promise.all([
+      fetch(`https://newsapi.org/v2/everything?q=${encodeURIComponent('ישראל')}&language=he&apiKey=${process.env.NEWSAPI_KEY}`)
+        .then(res => res.json()).catch(() => ({ articles: [] })),
+      
+      // שימוש ב-Israel-API (דוגמה לנתיב פופולרי מהפרויקט שלו)
+      fetch(`https://israel-news-api.vercel.app/api/news`) 
+        .then(res => res.json()).catch(() => []),
+        
       fetchHotNews().catch(() => []) 
     ]);
 
-    // 2. איחוד וסינון כפילויות
+    // 2. איחוד המקורות - שימי לב למיפוי השדות מ-Israel-API
     const allArticles = [
-      ...(telegramItems || []).map((item: any) => ({
-        ...item,
-        sourceName: item.sourceName || 'Telegram Source', // תיקון קטן לשם השדה
-        origin: 'RSS/Telegram'
+      ...rssItems,
+      ...(israelApiRes || []).map((a: any) => ({
+        id: a.url || a.link,
+        title: a.title,
+        link: a.url || a.link,
+        pubDate: a.date || a.publishedAt,
+        sourceName: a.source || 'Israel-API',
+        author: a.author || ''
       })),
       ...(newsRes.articles || []).map((a: any) => ({
         id: a.url,
@@ -32,8 +40,7 @@ export async function GET() {
         link: a.url,
         pubDate: a.publishedAt,
         sourceName: a.source?.name || 'NewsAPI',
-        author: a.author || '',
-        origin: 'NewsAPI'
+        author: a.author || ''
       }))
     ];
     // 3. לוגיקת ה-AI (נשארת אותו דבר, היא עובדת מצוין)
