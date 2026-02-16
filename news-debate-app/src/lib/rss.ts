@@ -2,34 +2,36 @@ import Parser from 'rss-parser';
 const parser = new Parser();
 
 export async function fetchTelegramRSS() {
-  const telegramFeeds = [
+  const feeds = [
     { 
-      name: 'Telegram Channel', 
-      url: 'https://rss.app/feeds/n2sDVhinP9NLuni7.xml' 
+      name: 'פיד ימין (טלגרם)', 
+      url: 'https://rsshub.app/telegram/channel/fidyamin' 
     }
   ];
 
   try {
     const results = await Promise.all(
-      telegramFeeds.map(feed => 
+      feeds.map(feed => 
         parser.parseURL(feed.url)
           .then(res => res.items.map(item => ({
             id: item.guid || item.link || Math.random().toString(),
-            title: item.title || 'Telegram Update',
+            title: item.title || 'עדכון מפיד ימין',
             link: item.link || '#',
+            // RSSHub לפעמים מחזיר תאריך בפורמט מעט שונה, נוודא תקינות:
             pubDate: item.isoDate || item.pubDate || new Date().toISOString(),
             sourceName: feed.name,
-            author: 'Telegram'
+            author: 'ימין' // סיווג ידני ראשוני למקרה שה-AI יפספס
           })))
           .catch(err => {
             console.error(`RSS Error for ${feed.name}:`, err);
-            return [];
+            return []; // מחזיר מערך ריק כדי לא להכשיל את שאר המקורות
           })
       )
     );
+    
     return results.flat();
   } catch (err) {
-    console.error("RSS Fetch Error:", err);
+    console.error("General RSS Fetch Error:", err);
     return [];
   }
 }
