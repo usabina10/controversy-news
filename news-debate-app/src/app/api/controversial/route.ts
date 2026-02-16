@@ -9,75 +9,56 @@ const redis = new Redis({
   token: process.env.KV_REST_API_TOKEN!,
 });
 
-const AI_PROMPT = `Analyze the political bias of the following Israeli entities (news outlets, journalists, or Telegram channels) based on Israeli public perception 2025-2026. 
+const AI_PROMPT = `Analyze the political bias of the following Israeli news entities based on Israeli public perception 2025-2026. 
 Categories: 'right', 'center', 'left'. 
-Return ONLY clean JSON: {"entity": "bias"}. 
+Return ONLY clean JSON: {"entity_name": "bias"}. 
 Entities: `;
 
 export async function GET() {
   try {
-    // בדיקה בכוח: כתיבת מפתח בדיקה ל-Redis
-    await redis.set("connection_test", "Last run: " + new Date().toISOString());
-    console.log("System: Forced Redis write check performed.");
- // 1. שליפת מקורות רשמיים מ-NewsAPI (מה שביקשת) + חדשות
+    // 1. שליפת מקורות רשמיים + כתבות + RSS
     const [sourcesRes, newsRes, rssItems] = await Promise.all([
-      fetch(`https://newsapi.org/v2/top-headlines/sources?country=il&apiKey=${process.env.NEWSAPI_KEY}`).then(res => res.json()),
-      fetch(`https://newsapi.org/v2/everything?q=${encodeURIComponent('ישראל OR פוליטיקה')}&language=he&sortBy=publishedAt&pageSize=40&apiKey=${process.env.NEWSAPI_KEY}`).then(res => res.json()),
+      fetch(`https://newsapi.org/v2/top-headlines/sources?country=il&apiKey=${process.env.NEWSAPI_KEY}`).then(res => res.json()).catch(() => ({ sources: [] })),
+      fetch(`https://newsapi.org/v2/everything?q=${encodeURIComponent('ישראל OR פוליטיקה')}&language=he&sortBy=publishedAt&pageSize=40&apiKey=${process.env.NEWSAPI_KEY}`).then(res => res.json()).catch(() => ({ articles: [] })),
       fetchHotNews().catch(() => [])
     ]);
 
-    // 2. איסוף כל השמות האפשריים לסיווג
-    const entities = new Set<string>();
+    const officialSourceNames = sourcesRes.sources?.map((s: any) => s.name) || [];
+    const newsApiArticles = newsRes.articles || [];
 
-    // הוספת המקורות הרשמיים מה-API שביקשת
-    if (sourcesRes.sources) {
-      sourcesRes.sources.forEach((s: any) => {
-        if (s.name) entities.add(s.name);
-      });
-    }
+    // 2. איחוד לכתבות לתצוגה
+    const allArticles = [
+      ...rssItems.map((item: any) => ({ ...item, sourceName: item.source || 'Telegram', origin: 'Telegram' })),
+      ...newsApiArticles.map((a: any) => ({
+        id: a.url,
+        title: a.title,
+        link: a.url,
+        pubDate: a.publishedAt,
+        sourceName: a.source?.name || 'NewsAPI',
+        author: a.author || '',
+        origin: 'NewsAPI'
+      }))
+    ];
 
-    // חילוץ עיתונאים ומקורות מתוך הכתבות
-    if (newsRes.articles) {
-      newsRes.articles.forEach((a: any) => {
-        if (a.source?.name) entities.add(a.source.name);
-        if (a.author && a.author.length > 2 && a.author.length < 25) {
-          const cleanName = a.author.replace(/כתב[ה]?|מערכת|/g, '').trim();
-          if (cleanName) entities.add(cleanName);
-        }
-      });
-    }
-
-    console.log(`System: Total unique entities found: ${entities.size}`);
-    console.log("System: Samples:", Array.from(entities).slice(0, 5));
-
-    // 3. חילוץ דינמי של ישויות (Entities)
-    const entities = new Set<string>(officialSourceNames); // מתחילים עם המקורות הרשמיים של NewsAPI
+    // 3. חילוץ ישויות (כאן הגדרנו פעם אחת בלבד!)
+    const entitiesToClassify = new Set<string>(officialSourceNames);
     
     allArticles.forEach(a => {
-      // מוסיפים את שם האתר/ערוץ
       if (a.sourceName && a.sourceName !== 'Telegram' && a.sourceName !== 'NewsAPI') {
-        entities.add(a.sourceName);
+        entitiesToClassify.add(a.sourceName);
       }
-      // מוסיפים את שם העיתונאי (אם קיים ותקין)
-      if (a.author && a.author.length > 2 && a.author.length < 30) {
-        const cleanAuthor = a.author.replace(/כתב[ה]?|מערכת|/g, '').trim();
-        if (cleanAuthor) entities.add(cleanAuthor);
+      if (a.author && a.author.length > 2 && a.author.length < 25) {
+        const cleanName = a.author.replace(/כתב[ה]?|מערכת|/g, '').trim();
+        if (cleanName) entitiesToClassify.add(cleanName);
       }
     });
 
-    // --- כאן נכנסת הבדיקה בכוח ל-Redis שדיברנו עליה ---
-    await redis.set("connection_test", "Last run: " + new Date().toISOString());
-
-    // 4. בדיקת Redis ו-AI (בתוך ה-Try)
+    // 4. בדיקת Redis וסיווג AI
     let biasMap: Record<string, string> = await redis.hgetall('entity_bias_map') || {};
-    let missing = Array.from(entities).filter(e => !biasMap[e]);
-
-    // בדיקת דאמי אם ריק
-    if (missing.length === 0 && Object.keys(biasMap).length === 0) {
-      missing = ["ynet", "haaretz", "channel14"];
-    }
+    const missing = Array.from(entitiesToClassify).filter(e => !biasMap[e]);
 
     if (missing.length > 0) {
+      console.log(`System: Found ${missing.length} new entities to classify.`);
       const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: { 
@@ -94,7 +75,6 @@ export async function GET() {
         const aiData = await aiRes.json();
         const content = aiData.choices?.[0]?.message?.content || '{}';
         const jsonMatch = content.match(/\{[\s\S]*\}/);
-        
         if (jsonMatch) {
           const newBiases = JSON.parse(jsonMatch[0]);
           for (const [entity, bias] of Object.entries(newBiases)) {
@@ -106,16 +86,15 @@ export async function GET() {
       }
     }
 
-    // 5. בניית התוצאה הסופית
+    // 5. בניית תוצאה סופית
     const finalNews = allArticles.map(a => ({
       ...a,
       bias: biasMap[a.author] || biasMap[a.sourceName] || 'center'
     })).sort((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime());
 
-    // החזרת ה-Response (כעת במיקום הנכון בתוך הפונקציה)
     return NextResponse.json({ 
-      newsItems: finalNews.slice(0, 25),
-      metadata: { count: finalNews.length }
+      newsItems: finalNews.slice(0, 30),
+      metadata: { totalEntities: entitiesToClassify.size, missingProcessed: missing.length }
     });
 
   } catch (error: any) {
