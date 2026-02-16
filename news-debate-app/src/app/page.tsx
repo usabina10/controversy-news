@@ -54,20 +54,42 @@ export default function Home() {
       </p>
       
       <div className="grid gap-8 max-w-6xl mx-auto">
-        {events.map(event => (
-          <div key={event.id || event.title} className="bg-white/10 backdrop-blur-xl rounded-3xl p-8 border border-white/20 hover:border-white/40 transition-all shadow-2xl hover:shadow-3xl">
-            <div className="flex flex-col md:flex-row gap-4 mb-6">
-              <h2 className="text-3xl font-bold flex-1 leading-tight">{event.title}</h2>
-              {event.link && (
-                <a 
-                  href={event.link} 
-                  target="_blank" 
-                  className="bg-white/20 hover:bg-white/30 px-6 py-3 rounded-2xl font-bold whitespace-nowrap"
-                >
-                  🔗 מקור
-                </a>
-              )}
-            </div>
+  {events.map(event => (
+    <div key={event.id || event.link} className={`bg-white/10 backdrop-blur-xl rounded-3xl p-8 border transition-all shadow-2xl ${
+      event.bias === 'right' ? 'border-red-500/50 shadow-red-500/10' :
+      event.bias === 'left' ? 'border-blue-500/50 shadow-blue-500/10' :
+      'border-white/20'
+    }`}>
+      <div className="flex flex-col md:flex-row gap-4 mb-6">
+        <h2 className="text-3xl font-bold flex-1 leading-tight">
+          {event.title}
+          <span className={`mr-4 text-sm px-3 py-1 rounded-full ${
+            event.bias === 'right' ? 'bg-red-500 text-white' :
+            event.bias === 'left' ? 'bg-blue-500 text-white' :
+            'bg-gray-500 text-white'
+          }`}>
+            {event.bias === 'right' ? 'ימין' : event.bias === 'left' ? 'שמאל' : 'מרכז'}
+          </span>
+        </h2>
+        {event.link && (
+          <a href={event.link} target="_blank" className="bg-white/20 hover:bg-white/30 px-6 py-3 rounded-2xl font-bold">
+            🔗 לכתבה המלאה
+          </a>
+        )}
+      </div>
+
+      <div className="text-lg opacity-90 mb-4">
+        {/* כאן מציגים את המקור והכותב */}
+        <p>מקור: <span className="font-bold">{event.sourceName}</span></p>
+        {event.author && <p>כתב: <span className="font-bold">{event.author}</span></p>}
+      </div>
+
+      <div className="mt-6 pt-6 border-t border-white/20 text-sm opacity-75">
+        {event.pubDate && <span>🕒 {new Date(event.pubDate).toLocaleString('he-IL')}</span>}
+      </div>
+    </div>
+  ))}
+</div>
             
             <div className="grid md:grid-cols-3 gap-6">
               <div className="bg-red-500/20 p-6 rounded-2xl border border-red-500/30 hover:bg-red-500/30 transition-all">
