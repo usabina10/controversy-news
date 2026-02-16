@@ -61,15 +61,18 @@ export async function GET() {
         method: 'POST',
         headers: { 
           'Authorization': `Bearer ${process.env.OPENROUTER_KEY?.trim()}`, 
-          'Content-Type': 'application/json'
-          // הורדנו את ה-Referer וה-Title - לפעמים הם אלו שיוצרים את ה-400
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://localhost:3000', // חלק מהמודלים דורשים את זה
+          'X-Title': 'NewsApp'
         },
         body: JSON.stringify({
-          model: 'meta-llama/llama-3.1-8b-instruct:free', 
+          // זה הנתיב הכי יציב ב-OpenRouter כרגע
+          model: 'google/gemini-pro-1.5', 
           messages: [{ 
             role: 'user', 
-            content: `Return only JSON: {"entity": "bias"}. Entities: ${missing.join(', ')}` 
-          }]
+            content: `Return JSON only: {"name": "right/left/center"}. Classify: ${missing.join(', ')}` 
+          }],
+          response_format: { type: "json_object" }
         })
       });
       
