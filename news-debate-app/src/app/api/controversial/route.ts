@@ -60,15 +60,14 @@ export async function GET() {
       const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: { 
-          'Authorization': `Bearer ${process.env.OPENROUTER_KEY}`, 
+          'Authorization': `Bearer ${process.env.OPENROUTER_KEY?.trim()}`, // ניקוי רווחים אוטומטי
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          // מודל שתמיד זמין בחינם ובדרך כלל לא מחזיר 404
-          model: 'mistralai/mistral-7b-instruct:free', 
+          model: 'google/gemini-2.0-flash-lite-preview-02-05:free', 
           messages: [{ 
             role: 'user', 
-            content: `Classify these as {"name": "right/left/center"}: ${missing.join(', ')}` 
+            content: `Classify these as JSON {"name": "right/left/center"}: ${missing.join(', ')}` 
           }]
         })
       });
